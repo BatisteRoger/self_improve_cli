@@ -1,6 +1,11 @@
+---
+name: navigate-traces
+description: Top-down workflow for analyzing AI-agent traces with self-improve CLI. Use when inspecting LangSmith traces, navigating L0-L3 representations, or following the recommended trace analysis workflow.
+---
+
 # Navigation Workflow
 
-This is the recommended top-down workflow for analyzing a trace.
+The recommended top-down workflow for analyzing a trace.
 Start cheap, drill down only when needed.
 
 ## Quick start
@@ -26,9 +31,9 @@ Use L0 to find interesting traces: errors, high token counts, long latencies.
 ### L1 — Structure and metrics
 
 ```bash
-self-improve skeleton <trace_id>       # One line per significant run
-self-improve tool-metrics <trace_id>   # Tool call patterns and efficiency
-self-improve context-metrics <trace_id> # Token decomposition and growth
+self-improve skeleton <trace_id>        # One line per significant run
+self-improve tool-metrics <trace_id>    # Tool call patterns and efficiency
+self-improve context-metrics <trace_id>  # Token decomposition and growth
 ```
 
 L1 gives you the shape of the trace without the content. Use it to decide
@@ -61,6 +66,28 @@ self-improve info <trace_id>
 
 Shows sanitization status, run count, and the sanitization report. Always
 check this after fetching to verify anonymization ran correctly.
+
+### Prompts
+
+```bash
+self-improve prompt pull <name> [--tag TAG]  # Download a prompt from LangSmith
+self-improve prompt list                     # List locally saved prompts
+self-improve prompt show <name> [--tag TAG]  # Show a saved prompt
+self-improve prompt diff <name> <trace_id>   # Compare prompt vs what trace used
+```
+
+Prompts are saved as local `.md` files under `data/prompts/`. The agent can
+edit them freely — they are local copies, not connected to LangSmith.
+
+### Target agent context
+
+```bash
+self-improve ati list          # List registered target agents
+self-improve ati show <name>   # Show an agent's architecture document
+```
+
+ATI documents are created by the `document-ati` skill and stored under
+`data/ati/<name>/architecture.md`.
 
 ## Workflow principles
 

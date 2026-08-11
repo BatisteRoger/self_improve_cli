@@ -145,3 +145,182 @@ def test_missing_trace_returns_error(saved_trace, capsys):
 def test_help_mentions_privacy():
     parser = build_parser()
     assert "anonymized" in parser.epilog.lower() or "privacy" in parser.epilog.lower()
+
+
+# ---------------------------------------------------------------------------
+# Skill command tests
+# ---------------------------------------------------------------------------
+
+
+def test_skill_list(capsys):
+    """`self-improve skill` lists available skills."""
+    # This works because tests run from the repo root where skills/ exists
+    assert main(["skill"]) == 0
+    out = capsys.readouterr().out
+    assert "navigate-traces" in out
+    assert "analyze-agent" in out
+    assert "document-ati" in out
+
+
+def test_skill_print_specific(capsys):
+    """`self-improve skill navigate-traces` prints the skill content."""
+    assert main(["skill", "navigate-traces"]) == 0
+    out = capsys.readouterr().out
+    assert "Navigation Workflow" in out
+    assert "L0" in out
+
+
+def test_skill_unknown(capsys):
+    """`self-improve skill unknown` returns an error."""
+    assert main(["skill", "nonexistent-skill"]) == 1
+    err = capsys.readouterr().err
+    assert "not found" in err
+
+
+# ---------------------------------------------------------------------------
+# Prompt command tests
+# ---------------------------------------------------------------------------
+
+
+def test_prompt_save_and_list(tmp_path, capsys):
+    """Prompt storage: save a prompt and list it."""
+    store = TraceStore(data_root=tmp_path)
+    store.save_prompt("my-prompt", "prod", "You are a helpful agent.")
+    store.save_prompt("my-prompt", "test", "You are a test agent.")
+    store.save_prompt("other-prompt", "latest", "Another prompt.")
+
+    prompts = store.list_prompts()
+    assert len(prompts) == 3
+    names = {(p["name"], p["tag"]) for p in prompts}
+    assert ("my-prompt", "prod") in names
+    assert ("my-prompt", "test") in names
+    assert ("other-prompt", "latest") in names
+
+
+def test_prompt_load(tmp_path):
+    """Prompt storage: load a saved prompt."""
+    store = TraceStore(data_root=tmp_path)
+    store.save_prompt("my-prompt", "prod", "You are a helpful agent.")
+    content = store.load_prompt("my-prompt", tag="prod")
+    assert content == "You are a helpful agent."
+    assert store.load_prompt("nonexistent") is None
+
+
+def test_prompt_show_command(tmp_path, capsys):
+    """`self-improve prompt show` prints a saved prompt."""
+    store = TraceStore(data_root=tmp_path)
+    store.save_prompt("my-prompt", "latest", "You are a helpful agent.")
+    assert main(["prompt", "show", "my-prompt", "--data-dir", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert "helpful agent" in out
+
+
+def test_prompt_show_not_found(tmp_path, capsys):
+    """`self-improve prompt show` errors for unknown prompts."""
+    assert main(["prompt", "show", "nonexistent", "--data-dir", str(tmp_path)]) == 1
+    err = capsys.readouterr().err
+    assert "not found" in err
+
+
+def test_prompt_list_command(tmp_path, capsys):
+    """`self-improve prompt list` lists saved prompts."""
+    store = TraceStore(data_root=tmp_path)
+    store.save_prompt("my-prompt", "prod", "You are a helpful agent.")
+    assert main(["prompt", "list", "--data-dir", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert "my-prompt:prod" in out
+
+
+def test_prompt_list_empty(tmp_path, capsys):
+    """`self-improve prompt list` handles no saved prompts."""
+    assert main(["prompt", "list", "--data-dir", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert "No saved prompts" in out
+
+
+def test_prompt_diff_command(saved_trace, tmp_path, capsys):
+    """`self-improve prompt diff` compares a saved prompt against a trace."""
+    trace_id, data_dir = saved_trace
+    # Save a prompt that differs from the trace's system message
+    store = TraceStore(data_root=tmp_path)
+    store.save_prompt("my-prompt", "latest", "You are a different agent.")
+    assert main(["prompt", "diff", "my-prompt", trace_id, "--data-dir", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert "Approximate diff" in out
+
+
+def test_prompt_diff_identical(saved_trace, tmp_path, capsys):
+    """`self-improve prompt diff` reports no differences when identical."""
+    trace_id, _ = saved_trace
+    # Save a prompt that matches the trace's system message
+    store = TraceStore(data_root=tmp_path)
+    store.save_prompt("my-prompt", "latest", "You are a helpful agent.")
+    assert main(["prompt", "diff", "my-prompt", trace_id, "--data-dir", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert "No differences" in out
+
+
+# ---------------------------------------------------------------------------
+# ATI command tests
+# ---------------------------------------------------------------------------
+
+
+def test_ati_save_and_list(tmp_path):
+    """ATI storage: list registered ATIs."""
+    store = TraceStore(data_root=tmp_path)
+    # Create an ATI document manually (as the document-ati skill would)
+    ati_dir = tmp_path / "ati" / "my-agent"
+    ati_dir.mkdir(parents=True)
+    (ati_dir / "architecture.md").write_text("# My Agent\n\nPurpose: test.", encoding="utf-8")
+
+    atis = store.list_atis()
+    assert atis == ["my-agent"]
+
+
+def test_ati_load(tmp_path):
+    """ATI storage: load an architecture document."""
+    store = TraceStore(data_root=tmp_path)
+    ati_dir = tmp_path / "ati" / "my-agent"
+    ati_dir.mkdir(parents=True)
+    (ati_dir / "architecture.md").write_text("# My Agent\n\nPurpose: test.", encoding="utf-8")
+
+    content = store.load_ati("my-agent")
+    assert content is not None
+    assert "My Agent" in content
+    assert store.load_ati("nonexistent") is None
+
+
+def test_ati_list_command(tmp_path, capsys):
+    """`self-improve ati list` lists registered ATIs."""
+    ati_dir = tmp_path / "ati" / "my-agent"
+    ati_dir.mkdir(parents=True)
+    (ati_dir / "architecture.md").write_text("# My Agent", encoding="utf-8")
+
+    assert main(["ati", "list", "--data-dir", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert "my-agent" in out
+
+
+def test_ati_list_empty(tmp_path, capsys):
+    """`self-improve ati list` handles no ATIs."""
+    assert main(["ati", "list", "--data-dir", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert "No ATIs" in out
+
+
+def test_ati_show_command(tmp_path, capsys):
+    """`self-improve ati show` prints an architecture document."""
+    ati_dir = tmp_path / "ati" / "my-agent"
+    ati_dir.mkdir(parents=True)
+    (ati_dir / "architecture.md").write_text("# My Agent\n\nPurpose: test.", encoding="utf-8")
+
+    assert main(["ati", "show", "my-agent", "--data-dir", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert "My Agent" in out
+
+
+def test_ati_show_not_found(tmp_path, capsys):
+    """`self-improve ati show` errors for unknown ATIs."""
+    assert main(["ati", "show", "nonexistent", "--data-dir", str(tmp_path)]) == 1
+    err = capsys.readouterr().err
+    assert "not found" in err

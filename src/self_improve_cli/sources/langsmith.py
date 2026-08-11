@@ -7,6 +7,7 @@ SDK-specific objects stop here — nothing downstream imports langsmith.
 from __future__ import annotations
 
 import fnmatch
+import json
 import logging
 import os
 import time
@@ -282,3 +283,29 @@ class LangSmithSource(TraceSource):
             sanitized=False,
             source="langsmith",
         )
+
+    def pull_prompt(self, name: str, tag: str | None = None) -> str:
+        """Pull a prompt from LangSmith Prompt Hub and return its template text.
+
+        Args:
+            name: The prompt name without tag (e.g. "react_agent").
+            tag: The environment tag (e.g. "prod", "staging", "test").
+                 If None, pulls the latest.
+
+        Returns:
+            The prompt template string.
+        """
+        client = self._get_client()
+        full_name = f"{name}:{tag}" if tag else name
+        logger.info("Pulling prompt %s", full_name)
+        prompt = client.pull(name, tag=tag, include_model=False)
+        return _extract_template(prompt)
+
+
+def _extract_template(prompt_obj: Any) -> str:
+    """Extract the template string from a pulled prompt object."""
+    if hasattr(prompt_obj, "templates") and prompt_obj.templates:
+        return prompt_obj.templates[0].template
+    if hasattr(prompt_obj, "template"):
+        return prompt_obj.template
+    return json.dumps(prompt_obj, indent=2, default=str)

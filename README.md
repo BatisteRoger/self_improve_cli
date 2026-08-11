@@ -45,17 +45,63 @@ This CLI is not a replacement for LangSmith — it's a **compression and analysi
 pip install self-improve-cli[langsmith]
 self-improve init              # Create .env from template
 # Edit .env with your LangSmith API key and project name
-self-improve skill             # Print the recommended navigation workflow
+self-improve skill             # List available skills
 self-improve list --limit 10   # L0: discover recent traces
 self-improve fetch <trace_id>  # Download, anonymize, and build all representations
 self-improve narrative <trace_id>   # L2: read the trace story
 self-improve run-detail <trace_id> <run_id>  # L3: drill into one run
 ```
 
+## Skills
+
+The CLI ships with agent skills in the `skills/` directory. Install them into your agent with:
+
+```bash
+npx skills add BatisteRoger/self_improve_cli
+```
+
+Available skills:
+
+- **navigate-traces** — the top-down trace analysis workflow (L0 to L3)
+- **analyze-agent** — systematic trace interpretation with structured observation templates
+- **document-ati** — create architecture documents for target agents being analyzed
+
+You can also print a skill directly from the CLI:
+
+```bash
+self-improve skill                 # list available skills
+self-improve skill navigate-traces # print a specific skill
+```
+
+## Prompts
+
+Pull prompts from LangSmith Prompt Hub and save them as local `.md` files your agent can edit:
+
+```bash
+self-improve prompt pull my-agent --tag prod   # Download a prompt
+self-improve prompt list                        # List saved prompts
+self-improve prompt show my-agent --tag prod    # Show a saved prompt
+self-improve prompt diff my-agent <trace_id>    # Compare vs what a trace used
+```
+
+Prompts are saved under `data/prompts/` (gitignored). The agent can edit them freely — they're local copies. **No upload capability**: you manually push changes to LangSmith.
+
+## Target agent context
+
+Document the agent you're analyzing so trace interpretation happens in context:
+
+```bash
+self-improve ati list          # List registered target agents
+self-improve ati show my-agent # Show an agent's architecture document
+```
+
+ATI documents are created by the `document-ati` skill and stored under `data/ati/<name>/architecture.md` (gitignored).
+
 ## What it does not do
 
 - **Modify the target agent.** This CLI observes and analyzes. It does not change prompts, code, or models.
 - **Replace human review.** It produces representations and metrics. A human (or a separate evaluator agent) interprets them and decides what to do.
+- **Upload to LangSmith.** The `prompt` command is read-only. Humans have to manually push prompt changes. This is opinionated and we care about this. Please don't make a PR to "solve" this.
 - **Guarantee perfect anonymization.** Anonymization is defense in depth. Review output before sharing.
 
 ## Where to learn more

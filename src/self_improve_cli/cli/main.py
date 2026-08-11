@@ -238,13 +238,61 @@ def _cmd_info(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
-def _cmd_skill(args: argparse.Namespace) -> int:
-    """Print the navigation workflow from SKILL.md."""
-    from importlib.resources import files
+def _find_skills_dir() -> Path | None:
+    """Find the skills directory, checking repo root, .agents, and package data."""
+    # 1. Repo root (for cloned repo users)
+    root_skills = Path("skills")
+    if root_skills.is_dir() and any(root_skills.glob("*/SKILL.md")):
+        return root_skills
+    # 2. .agents/skills (for users who installed via npx skills add)
+    agents_skills = Path(".agents/skills")
+    if agents_skills.is_dir() and any(agents_skills.glob("*/SKILL.md")):
+        return agents_skills
+    # 3. Package data (for pip-installed users)
+    try:
+        from importlib.resources import files
 
-    skill_path = Path(str(files("self_improve_cli"))) / "SKILL.md"
+        pkg_skills = Path(str(files("self_improve_cli"))) / "skills"
+        if pkg_skills.is_dir() and any(pkg_skills.glob("*/SKILL.md")):
+            return pkg_skills
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
+def _cmd_skill(args: argparse.Namespace) -> int:
+    """List available skills or print a specific skill's SKILL.md."""
+    skills_dir = _find_skills_dir()
+    if skills_dir is None:
+        print(
+            "No skills found. Install with: npx skills add BatisteRoger/self_improve_cli",
+            file=sys.stderr,
+        )
+        return EXIT_ERROR
+
+    skill_name = getattr(args, "skill_name", None)
+    if skill_name is None:
+        # List available skills
+        skills = sorted(
+            d.name for d in skills_dir.iterdir() if d.is_dir() and (d / "SKILL.md").exists()
+        )
+        if not skills:
+            print("No skills found.", file=sys.stderr)
+            return EXIT_ERROR
+        for name in skills:
+            print(name)
+        return EXIT_OK
+
+    # Print a specific skill
+    skill_path = skills_dir / skill_name / "SKILL.md"
     if not skill_path.exists():
-        print("SKILL.md not found.", file=sys.stderr)
+        available = sorted(
+            d.name for d in skills_dir.iterdir() if d.is_dir() and (d / "SKILL.md").exists()
+        )
+        print(
+            f"Skill '{skill_name}' not found. Available: {', '.join(available)}",
+            file=sys.stderr,
+        )
         return EXIT_ERROR
     print(skill_path.read_text(encoding="utf-8"))
     return EXIT_OK
@@ -264,6 +312,139 @@ def _cmd_init(args: argparse.Namespace) -> int:
         return EXIT_ERROR
     env_path.write_text(example_path.read_text(encoding="utf-8"), encoding="utf-8")
     print("Created .env from .env.example. Edit it to fill in your LangSmith API key.")
+    return EXIT_OK
+
+
+# ---------------------------------------------------------------------------
+# Prompt commands
+# ---------------------------------------------------------------------------
+
+
+def _cmd_prompt_pull(args: argparse.Namespace) -> int:
+    """Pull a prompt from LangSmith Prompt Hub and save it locally."""
+    from self_improve_cli.sources.langsmith import LangSmithSource
+
+    source = LangSmithSource()
+    tag = args.tag or "latest"
+    content = source.pull_prompt(args.name, tag=args.tag)
+    store = _get_store(args)
+    path = store.save_prompt(args.name, tag, content)
+    result = {
+        "name": args.name,
+        "tag": tag,
+        "path": str(path),
+        "size_bytes": len(content.encode("utf-8")),
+    }
+    _output(result, args)
+    return EXIT_OK
+
+
+def _cmd_prompt_list(args: argparse.Namespace) -> int:
+    """List locally saved prompts."""
+    store = _get_store(args)
+    prompts = store.list_prompts()
+    if args.format == "json":
+        print(json.dumps(prompts, indent=2, ensure_ascii=False))
+    else:
+        if not prompts:
+            print("No saved prompts. Use `self-improve prompt pull <name>` to download one.")
+            return EXIT_OK
+        for p in prompts:
+            print(f"{p['name']}:{p['tag']}  {p['size_bytes']} bytes")
+    return EXIT_OK
+
+
+def _cmd_prompt_show(args: argparse.Namespace) -> int:
+    """Show a locally saved prompt."""
+    store = _get_store(args)
+    tag = args.tag or "latest"
+    content = store.load_prompt(args.name, tag=tag)
+    if content is None:
+        print(
+            f"Prompt '{args.name}:{tag}' not found. "
+            f"Pull it first: self-improve prompt pull {args.name} --tag {tag}",
+            file=sys.stderr,
+        )
+        return EXIT_ERROR
+    _output(content, args)
+    return EXIT_OK
+
+
+def _cmd_prompt_diff(args: argparse.Namespace) -> int:
+    """Compare a locally saved prompt against what a trace used (approximate)."""
+    import difflib
+
+    store = _get_store(args)
+    tag = args.tag or "latest"
+    local_prompt = store.load_prompt(args.name, tag=tag)
+    if local_prompt is None:
+        print(f"Prompt '{args.name}:{tag}' not found. Pull it first.", file=sys.stderr)
+        return EXIT_ERROR
+
+    trace = store.load_trace(args.trace_id)
+    # Extract the system message from the first LLM run that has one
+    trace_prompt = ""
+    for run in trace.runs:
+        if run.run_type.value != "llm":
+            continue
+        for msg in run.input_messages:
+            if msg.role == "system":
+                trace_prompt = msg.text
+                break
+        if trace_prompt:
+            break
+
+    if not trace_prompt:
+        print(f"No system message found in trace {args.trace_id}.", file=sys.stderr)
+        return EXIT_ERROR
+
+    local_lines = local_prompt.splitlines(keepends=True)
+    trace_lines = trace_prompt.splitlines(keepends=True)
+    diff = difflib.unified_diff(
+        local_lines,
+        trace_lines,
+        fromfile=f"{args.name}:{tag} (local)",
+        tofile=f"{args.trace_id} (trace)",
+    )
+    diff_text = "".join(diff)
+    if not diff_text:
+        print(f"No differences found between {args.name}:{tag} and the trace's system prompt.")
+    else:
+        print("Approximate diff (traces may have runtime substitutions):\n")
+        print(diff_text, end="")
+    return EXIT_OK
+
+
+# ---------------------------------------------------------------------------
+# ATI commands
+# ---------------------------------------------------------------------------
+
+
+def _cmd_ati_list(args: argparse.Namespace) -> int:
+    """List registered ATIs."""
+    store = _get_store(args)
+    atis = store.list_atis()
+    if args.format == "json":
+        print(json.dumps(atis, ensure_ascii=False))
+    else:
+        if not atis:
+            print("No ATIs registered. Use the document-ati skill to create one.")
+            return EXIT_OK
+        for name in atis:
+            print(name)
+    return EXIT_OK
+
+
+def _cmd_ati_show(args: argparse.Namespace) -> int:
+    """Show an ATI's architecture document."""
+    store = _get_store(args)
+    content = store.load_ati(args.name)
+    if content is None:
+        print(
+            f"ATI '{args.name}' not found. Create it with the document-ati skill.", file=sys.stderr
+        )
+        return EXIT_ERROR
+    _output(content, args)
     return EXIT_OK
 
 
@@ -357,12 +538,58 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=_cmd_info)
 
     # skill
-    p = sub.add_parser("skill", help="Print the recommended navigation workflow")
+    p = sub.add_parser("skill", help="List available skills or print a specific skill")
+    p.add_argument("skill_name", nargs="?", default=None, help="Skill name (omit to list)")
     p.set_defaults(func=_cmd_skill)
 
     # init
     p = sub.add_parser("init", help="Create a .env file from .env.example")
     p.set_defaults(func=_cmd_init)
+
+    # prompt
+    p = sub.add_parser("prompt", help="Pull and manage LangSmith prompts (read-only)")
+    prompt_sub = p.add_subparsers(dest="prompt_command", required=True)
+
+    p_pull = prompt_sub.add_parser("pull", help="Download a prompt from LangSmith Prompt Hub")
+    p_pull.add_argument("name", help="Prompt name (e.g. react_agent)")
+    p_pull.add_argument(
+        "--tag", default=None, help="Tag (e.g. prod, staging, test). Default: latest"
+    )
+    p_pull.add_argument("--project", default=None, help="LangSmith project name")
+    add_common_opts(p_pull)
+    p_pull.set_defaults(func=_cmd_prompt_pull)
+
+    p_list = prompt_sub.add_parser("list", help="List locally saved prompts")
+    add_common_opts(p_list)
+    p_list.set_defaults(func=_cmd_prompt_list)
+
+    p_show = prompt_sub.add_parser("show", help="Show a locally saved prompt")
+    p_show.add_argument("name", help="Prompt name")
+    p_show.add_argument("--tag", default=None, help="Tag (default: latest)")
+    add_common_opts(p_show)
+    p_show.set_defaults(func=_cmd_prompt_show)
+
+    p_diff = prompt_sub.add_parser(
+        "diff", help="Compare a saved prompt against what a trace used (approximate)"
+    )
+    p_diff.add_argument("name", help="Prompt name")
+    p_diff.add_argument("trace_id", help="Trace ID to compare against")
+    p_diff.add_argument("--tag", default=None, help="Tag (default: latest)")
+    add_common_opts(p_diff)
+    p_diff.set_defaults(func=_cmd_prompt_diff)
+
+    # ati
+    p = sub.add_parser("ati", help="List or show target agent architecture docs")
+    ati_sub = p.add_subparsers(dest="ati_command", required=True)
+
+    p_ati_list = ati_sub.add_parser("list", help="List registered ATIs")
+    add_common_opts(p_ati_list)
+    p_ati_list.set_defaults(func=_cmd_ati_list)
+
+    p_ati_show = ati_sub.add_parser("show", help="Show an ATI's architecture document")
+    p_ati_show.add_argument("name", help="ATI name")
+    add_common_opts(p_ati_show)
+    p_ati_show.set_defaults(func=_cmd_ati_show)
 
     return parser
 

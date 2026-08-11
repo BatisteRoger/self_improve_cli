@@ -55,7 +55,7 @@ self-improve = "self_improve_cli.cli.main:main"
 packages = ["src/self_improve_cli"]
 
 [tool.hatch.build.targets.wheel.force-include]
-"src/self_improve_cli/SKILL.md" = "self_improve_cli/SKILL.md"
+"skills" = "self_improve_cli/skills"
 "src/self_improve_cli/.env.example" = "self_improve_cli/.env.example"
 "src/self_improve_cli/py.typed" = "self_improve_cli/py.typed"
 
