@@ -16,6 +16,36 @@ The CLI produces representations and metrics. It does not propose or apply impro
 - **Run**: one unit of work, such as an LLM call or tool call.
 - **TER**: token-efficient representation; a condensed, recomputable view of trace data.
 
+## The improvement triangle
+
+Every observation and suggestion should be weighed against three axes:
+
+- **Output quality** — is the agent succeeding at its task?
+- **Speed** — how long does the agent take?
+- **Cost** — how many tokens (and API calls) does the agent consume?
+
+These axes are in tension. The choice of LLM impacts all three, but
+context optimization — where tokens are spent and where they are saved —
+can improve speed and cost while hurting quality, or while improving it
+too. Reducing tokens on the supervisor prompt, trimming a subagent's
+tool outputs, or compacting conversation history are all context
+optimizations with different trade-offs.
+
+**Agentic engineering is context optimization.** The question is not
+"how do we make the agent better" in the abstract — it's "where are
+tokens being spent without contributing to quality, and where would
+spending more tokens improve the outcome?"
+
+The nuance: sometimes we save tokens in the short term (one step, one
+tool call) but harm the conversation overall. A tool output that was
+trimmed might contain the information the agent needed three steps
+later. A compaction that dropped a constraint might cause a goal drift
+that only surfaces at the end. **This is where human investigation is
+essential** — the CLI can surface the signals (context jumps, dead
+context, compaction events), but whether a local optimization helped or
+harmed the whole task is a judgment that requires stepping back and
+looking at the entire trace in context.
+
 ## Values
 
 1. **Token efficiency.** Every output is bounded and progressive. Start with cheap overviews, drill down only when needed.

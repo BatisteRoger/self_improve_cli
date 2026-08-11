@@ -93,41 +93,74 @@ into context unless you've identified the run as worth investigating.
 
 ## Step 6: Produce structured observations
 
-Write observations as Markdown. Two levels:
+Write observations as Markdown using a multi-axis schema.
+Each observation labels **what happened** before inferring **why**.
 
-### MicroEO — single run observation
+See `references/mechanisms.md` for the full vocabulary, fault loci, impact
+values, evidence status levels, and discouraged terms.
+
+### RunEO — single run observation
 
 ```markdown
-## MicroEO: <run_id>
+## RunEO: <run_id>
 
 **Run**: <name> (<run_type>)
-**Signal**: <what triggered the observation — error, metric, pattern>
+**primary_pattern**: <canonical label from mechanisms.md>
+**secondary_patterns**: <optional, other patterns present>
+**fault_locus**: <model | agent_harness | context | memory | tool_integration | external_environment | task_spec>
+**impact**: <incorrect_result | unverified_completion | external_side_effect | resource_exhaustion | no_impact>
+**evidence_status**: <observed | suspected | confirmed>
 
-**Observation**: <what happened, stated factually>
+**Observation**: <what happened, stated factually — name the trace-observable pattern>
 
-**Evidence**: <quote from the trace — message, tool call, or metric value>
+**Evidence**: <quote from the trace — message, tool call, or metric value, with run id>
 
-**Possible cause**: <hypothesis, labeled as such>
+**Hypothesis**: <why it might have happened, labeled as hypothesis>
 
 **Suggested investigation**: <what to check next, not a fix>
 ```
 
-### MacroEO — whole trace observation
+### TraceEO — whole trace observation
 
 ```markdown
-## MacroEO: <trace_id>
+## TraceEO: <trace_id>
 
 **Trace**: <trace_id> (<N> runs, <duration>)
-**Signals**: <list of L1 signals that triggered this observation>
+**primary_patterns**: <canonical labels that characterize the trace>
+**fault_loci**: <where to investigate, provisional>
+**evidence_status**: <observed | suspected | confirmed>
 
 **Observation**: <what the trace reveals about the agent's behavior>
 
 **Evidence**: <references to specific runs or metric values>
 
-**Possible causes**: <hypotheses, labeled as such>
+**Hypotheses**: <why patterns might have occurred, labeled as hypotheses>
 
 **Suggested investigations**: <what to check next, not fixes>
 ```
+
+## Weighing observations: the quality/cost/speed triangle
+
+Every observation should be weighed against three axes:
+
+- **Quality** — did the agent succeed at its task?
+- **Cost** — how many tokens did it consume?
+- **Speed** — how long did it take?
+
+These are in tension. Context optimization (where tokens are spent vs
+saved) can improve cost and speed while hurting quality — or while
+improving it. The question is not "is this pattern bad" in the abstract,
+but "where are tokens being spent without contributing to quality, and
+where would spending more improve the outcome?"
+
+**Take a step back.** A local optimization (trimming a tool output,
+compacting history) might save tokens on one step but harm the
+conversation overall. Whether a local saving helped or harmed the whole
+task is a judgment that requires looking at the entire trace in context.
+The CLI surfaces the signals (context jumps, dead context, compaction
+events); the analyst decides whether the trade-off was worth it.
+
+See `AGENTS.md` — "The improvement triangle" — for the full framing.
 
 ## Principles
 
@@ -136,7 +169,15 @@ Write observations as Markdown. Two levels:
    human reviewer decides what to change.
 2. **Every observation needs evidence.** Reference specific run IDs, metric
    values, or quoted text from the trace.
-3. **Distinguish trajectory from run quality.** An agent taking a complex
+3. **Name the pattern before inferring cause.** Use canonical labels from
+   `references/mechanisms.md`. Write `tool.ignored_feedback: the agent
+   continued after a 403`, not "the model was careless." Then record
+   `fault_locus` only if review supports it.
+4. **Distinguish trajectory from run quality.** An agent taking a complex
    approach is not the same as a step failing. Don't conflate them.
-4. **Check the sanitization report first.** If `complete: false`, the
+5. **Weigh against the triangle.** Every observation implies a trade-off
+   between quality, cost, and speed. State which axis is affected and
+   whether the trade-off seems worth it — but defer the final call to a
+   human reviewer.
+6. **Check the sanitization report first.** If `complete: false`, the
    anonymization may be incomplete — be careful about quoting trace content.
