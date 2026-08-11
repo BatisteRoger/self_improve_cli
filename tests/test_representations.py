@@ -155,3 +155,45 @@ def test_run_detail_unknown_id_raises():
 def test_empty_trace_does_not_crash():
     assert "(empty trace)" in build_skeleton([])
     assert "(empty trace)" in build_narrative([])
+
+
+def test_skeleton_labels_infra_cancelled_error():
+    """A CancelledError is labeled as infra-cancelled, not an agent error."""
+    root = make_root(trace_id="trace-cancel")
+    root.error = "CancelledError()"
+    root.status = "error"
+    skeleton = build_skeleton([root])
+    assert "infra-cancelled" in skeleton
+    assert "not an agent failure" in skeleton
+
+
+def test_skeleton_labels_regular_error_normally():
+    """A regular error is labeled as ERROR without the infra-cancelled tag."""
+    root = make_root(trace_id="trace-err")
+    root.error = "ValueError: bad input"
+    root.status = "error"
+    skeleton = build_skeleton([root])
+    assert "ERROR" in skeleton
+    assert "infra-cancelled" not in skeleton
+
+
+def test_narrative_labels_infra_cancelled_error():
+    """A CancelledError in a tool run is labeled in the narrative too."""
+    root = make_root(trace_id="trace-cancel")
+    root.inputs = {"messages": [{"type": "human", "content": "do something"}]}
+    root.outputs = {"messages": [{"type": "ai", "content": "ok"}]}
+    tool = make_run(
+        "tool-1", run_type=RunType.TOOL, name="slow_tool", parent="root", trace_id="trace-cancel"
+    )
+    tool.error = "asyncio.exceptions.CancelledError"
+    narrative = build_narrative([root, tool])
+    assert "infra-cancelled" in narrative
+
+
+def test_skeleton_labels_timeout_as_infra():
+    """TimeoutError is also recognized as infra-cancelled."""
+    root = make_root(trace_id="trace-timeout")
+    root.error = "TimeoutError: operation timed out"
+    root.status = "error"
+    skeleton = build_skeleton([root])
+    assert "infra-cancelled" in skeleton

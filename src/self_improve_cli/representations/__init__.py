@@ -27,6 +27,32 @@ _NOISE_NAME_MARKERS = ("Middleware",)
 _MAX_MSG_CHARS = 1500
 _MAX_TOOL_CHARS = 600
 
+# Error strings that indicate infrastructure/harness interruption, not an
+# agent or code defect. When the error text contains one of these markers,
+# the skeleton and narrative label it as infra-cancelled so the analyst
+# doesn't misdiagnose a manual shutdown or timeout as an agent failure.
+_INFRA_ERROR_MARKERS = (
+    "CancelledError",
+    "asyncio.exceptions.CancelledError",
+    "KeyboardInterrupt",
+    "TimeoutError",
+    "concurrent.futures._base.TimeoutError",
+)
+
+
+def _is_infra_error(error: str) -> bool:
+    """Return True if the error string matches a known infra/harness marker."""
+    error_lower = error.lower()
+    return any(marker.lower() in error_lower for marker in _INFRA_ERROR_MARKERS)
+
+
+def _format_error(error: str, limit: int) -> str:
+    """Format a run error, labeling infra-cancelled errors distinctly."""
+    truncated = _truncate(error, limit)
+    if _is_infra_error(error):
+        return f" ERROR (infra-cancelled, not an agent failure): {truncated}"
+    return f" ERROR: {truncated}"
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -126,7 +152,7 @@ def build_skeleton(runs: list[Run]) -> str:
     for i, run in enumerate(sig):
         depth = len((run.dotted_order or "").split(".")) - 1
         indent = "  " * depth
-        error = f" ERROR: {_truncate(str(run.error), 200)}" if run.error else ""
+        error = _format_error(str(run.error), 200) if run.error else ""
         tokens = run.total_tokens
         tokens_part = f" tokens={tokens}" if tokens else ""
         lines.append(
@@ -225,7 +251,7 @@ def build_narrative(runs: list[Run]) -> str:
                 f"output: {_truncate(outputs, _MAX_TOOL_CHARS)}",
             ]
         if run.error:
-            sections.append(f"ERROR: {_truncate(str(run.error), 1000)}")
+            sections.append(_format_error(str(run.error), 1000))
 
     return "\n".join(sections) + "\n"
 
