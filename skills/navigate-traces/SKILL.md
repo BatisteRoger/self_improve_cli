@@ -42,12 +42,26 @@ where to focus.
 ### L2 — Narrative
 
 ```bash
-self-improve narrative <trace_id>
+self-improve narrative <trace_id>           # Compact (default): per-index diff
+self-improve narrative <trace_id> --full    # Full: common-prefix diff
 ```
 
 The narrative is the main analysis input. It tells the chronological story
 of the trace with message deltas (only new messages are shown per LLM step)
 and tool call arguments/results.
+
+Two modes are available:
+
+- **Compact** (default) — compares each message at its index independently.
+  Identical messages collapse to `(N unchanged messages)` even when earlier
+  messages changed (e.g. a dynamic system prompt that changes every step).
+  This is the best mode for agent consumption — it minimizes tokens.
+- **Full** — uses a common-prefix walk that stops at the first mismatch.
+  When the system message changes, all subsequent messages are re-dumped.
+  Better for humans skimming start-to-end.
+
+When you run `self-improve fetch`, both `narrative_compact.md` and
+`narrative_full.md` are saved to `data/ter/<trace_id>/`.
 
 ### L3 — Run detail
 

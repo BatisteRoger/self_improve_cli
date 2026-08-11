@@ -189,7 +189,8 @@ def _cmd_skeleton(args: argparse.Namespace) -> int:
 def _cmd_narrative(args: argparse.Namespace) -> int:
     store = _get_store(args)
     trace = store.load_trace(args.trace_id)
-    content = build_narrative(trace.runs)
+    mode = "full" if getattr(args, "full", False) else "compact"
+    content = build_narrative(trace.runs, mode=mode)
     _output(content, args)
     return EXIT_OK
 
@@ -515,6 +516,11 @@ def build_parser() -> argparse.ArgumentParser:
     # narrative
     p = sub.add_parser("narrative", help="L2: trace story with message deltas")
     p.add_argument("trace_id")
+    p.add_argument(
+        "--full",
+        action="store_true",
+        help="Use full narrative (common-prefix diff). Default: compact (per-index diff).",
+    )
     add_common_opts(p)
     p.set_defaults(func=_cmd_narrative)
 

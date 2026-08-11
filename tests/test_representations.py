@@ -197,3 +197,105 @@ def test_skeleton_labels_timeout_as_infra():
     root.status = "error"
     skeleton = build_skeleton([root])
     assert "infra-cancelled" in skeleton
+
+
+# ---------------------------------------------------------------------------
+# Narrative compact mode (per-index diff)
+# ---------------------------------------------------------------------------
+
+
+def _dynamic_prompt_runs():
+    """Build runs where the system message changes every step (dynamic prompt).
+
+    This is the pattern that breaks the common-prefix walk: the system message
+    changes by one character each step, so common=0 and the entire message list
+    is re-dumped every step in full mode.
+
+    Uses a long human message so the compact mode savings are measurable.
+    """
+    long_task = (
+        "Write a song about a sailor who returns home after 20 years at sea. "
+        "The song should have three verses and a chorus. Make it melancholic "
+        "but with a hopeful ending. Use nautical imagery throughout."
+    )
+    root = make_root(trace_id="trace-dyn")
+    root.inputs = {"messages": [{"type": "human", "content": long_task}]}
+    root.outputs = {"messages": [{"type": "ai", "content": "ok"}]}
+
+    llm1 = make_run(
+        "llm-1", run_type=RunType.LLM, name="ChatOpenAI", parent="root", trace_id="trace-dyn"
+    )
+    llm1.input_messages = [
+        make_msg("system", "You are a songwriter. Draft: v1"),
+        make_msg("human", long_task),
+    ]
+    llm1.output_message = Message(role="ai", text="Verse 1...")
+
+    tool1 = make_run(
+        "tool-1", run_type=RunType.TOOL, name="edit_file", parent="root", trace_id="trace-dyn"
+    )
+    tool1.inputs = {"path": "song.md", "content": "Verse 1..."}
+    tool1.outputs = {"output": "ok"}
+
+    llm2 = make_run(
+        "llm-2", run_type=RunType.LLM, name="ChatOpenAI", parent="root", trace_id="trace-dyn"
+    )
+    llm2.input_messages = [
+        make_msg("system", "You are a songwriter. Draft: v2"),
+        make_msg("human", long_task),
+        Message(role="ai", text="Verse 1..."),
+        Message(role="tool", text="ok", tool_call_id="call-1"),
+    ]
+    llm2.output_message = Message(role="ai", text="Verse 2...")
+
+    return [root, llm1, tool1, llm2]
+
+
+def test_narrative_compact_collapses_unchanged_messages():
+    """Compact mode collapses unchanged messages even when the system prompt changed."""
+    runs = _dynamic_prompt_runs()
+    narrative = build_narrative(runs, mode="compact")
+    # The long human message appears in Task section and Step 1 (first call shows all).
+    # It should NOT be re-dumped in Step 2 (collapsed by per-index diff).
+    long_task = "Write a song about a sailor"
+    assert narrative.count(long_task) == 2  # Task + Step 1, but NOT Step 2
+
+
+def test_narrative_full_redumps_after_first_change():
+    """Full mode re-dumps all messages after the first change (common-prefix walk)."""
+    runs = _dynamic_prompt_runs()
+    narrative = build_narrative(runs, mode="full")
+    # The long human message appears in Task + Step 1 + Step 2 (re-dumped because system changed)
+    long_task = "Write a song about a sailor"
+    assert narrative.count(long_task) >= 3
+
+
+def test_narrative_compact_smaller_than_full():
+    """Compact mode produces a smaller file than full mode on dynamic prompts."""
+    runs = _dynamic_prompt_runs()
+    compact = build_narrative(runs, mode="compact")
+    full = build_narrative(runs, mode="full")
+    assert len(compact) < len(full)
+
+
+def test_narrative_compact_shows_unchanged_marker():
+    """Compact mode shows '(N unchanged messages)' for collapsed messages."""
+    runs = _dynamic_prompt_runs()
+    narrative = build_narrative(runs, mode="compact")
+    assert "unchanged messages" in narrative
+
+
+def test_narrative_default_mode_is_compact():
+    """build_narrative defaults to compact mode."""
+    runs = _dynamic_prompt_runs()
+    default = build_narrative(runs)
+    compact = build_narrative(runs, mode="compact")
+    assert default == compact
+
+
+def test_narrative_compact_still_shows_changed_system():
+    """Compact mode still shows the system message when it changes."""
+    runs = _dynamic_prompt_runs()
+    narrative = build_narrative(runs, mode="compact")
+    assert "Draft: v1" in narrative
+    assert "Draft: v2" in narrative

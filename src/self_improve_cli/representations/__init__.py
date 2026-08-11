@@ -167,8 +167,14 @@ def build_skeleton(runs: list[Run]) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _narrative_llm_step(run: Run, previous_msgs: list[Message]) -> tuple[str, list[Message]]:
-    """Render one LLM call as a delta against the previous call's messages."""
+def _narrative_llm_step_full(run: Run, previous_msgs: list[Message]) -> tuple[str, list[Message]]:
+    """Render one LLM call as a delta against the previous call's messages.
+
+    Uses a common-prefix walk: messages are compared in order, and the walk
+    stops at the first mismatch. Everything after the mismatch is printed in full.
+    This is the original behavior — useful for humans skimming start-to-end,
+    but degrades when the system message changes every step (dynamic prompts).
+    """
     msgs = run.input_messages
     prev_sigs = [_message_signature(m) for m in previous_msgs]
     sigs = [_message_signature(m) for m in msgs]
@@ -198,8 +204,59 @@ def _narrative_llm_step(run: Run, previous_msgs: list[Message]) -> tuple[str, li
     return "\n".join(lines), msgs
 
 
-def build_narrative(runs: list[Run]) -> str:
-    """Chronological story of the trace with message deltas per LLM call."""
+def _narrative_llm_step_compact(
+    run: Run, previous_msgs: list[Message], step_num: int
+) -> tuple[str, list[Message]]:
+    """Render one LLM call as a per-index delta against the previous call's messages.
+
+    For each message at index i, compare its signature against the message at
+    index i in the previous step independently (no early stop on first mismatch).
+    Identical messages collapse to one line; only genuinely new/changed messages
+    are printed in full. This fixes the cascade where a dynamic system prompt
+    causes the entire message list to be re-dumped every step.
+    """
+    msgs = run.input_messages
+    prev_sigs = [_message_signature(m) for m in previous_msgs]
+    sigs = [_message_signature(m) for m in msgs]
+
+    lines = []
+    unchanged = 0
+    for i, msg in enumerate(msgs):
+        if i < len(prev_sigs) and prev_sigs[i] == sigs[i]:
+            unchanged += 1
+            continue
+        if unchanged:
+            lines.append(f"({unchanged} unchanged messages)")
+            unchanged = 0
+        lines.append(f"[{msg.role}] {_truncate(msg.text, _MAX_MSG_CHARS)}")
+        if msg.tool_calls:
+            lines.append(_format_tool_calls(msg.tool_calls))
+    if unchanged:
+        lines.append(f"({unchanged} unchanged messages)")
+
+    out = run.output_message
+    lines.append("=> response:")
+    if out is None:
+        lines.append(
+            f"(no parsed output) {_truncate(json.dumps(run.outputs, default=str), _MAX_TOOL_CHARS)}"
+        )
+    else:
+        if out.text:
+            lines.append(f"[{out.role}] {_truncate(out.text, _MAX_MSG_CHARS)}")
+        if out.tool_calls:
+            lines.append(_format_tool_calls(out.tool_calls))
+    return "\n".join(lines), msgs
+
+
+def build_narrative(runs: list[Run], mode: str = "compact") -> str:
+    """Chronological story of the trace with message deltas per LLM call.
+
+    Args:
+        runs: canonical Run objects.
+        mode: "compact" (default) — per-index diff, collapses unchanged messages
+              even when earlier messages changed (e.g. dynamic system prompts).
+              "full" — common-prefix diff, original behavior for humans skimming.
+    """
     sig = significant_runs(runs)
     if not sig:
         return "# Narrative\n\n(empty trace)\n"
@@ -229,7 +286,10 @@ def build_narrative(runs: list[Run]) -> str:
                 f"## Step {step} — llm {run.name} "
                 f"(tokens={run.total_tokens}, latency={_latency_s(run)}s, id={run.id})"
             )
-            body, previous_msgs = _narrative_llm_step(run, previous_msgs)
+            if mode == "full":
+                body, previous_msgs = _narrative_llm_step_full(run, previous_msgs)
+            else:
+                body, previous_msgs = _narrative_llm_step_compact(run, previous_msgs, step)
             sections += ["", header, "", body]
         elif run.run_type == RunType.TOOL:
             step += 1
@@ -321,37 +381,42 @@ def write_ter(trace_id: str, runs: list[Run], store: Any) -> dict[str, Any]:
     from self_improve_cli.metrics.tool_metrics import build_tool_metrics
 
     skeleton = build_skeleton(runs)
-    narrative = build_narrative(runs)
+    narrative_compact = build_narrative(runs, mode="compact")
+    narrative_full = build_narrative(runs, mode="full")
     tool_metrics = build_tool_metrics(runs)
     context_metrics = build_context_metrics(runs)
 
     store.save_ter_file(trace_id, "skeleton.md", skeleton)
-    store.save_ter_file(trace_id, "narrative.md", narrative)
+    store.save_ter_file(trace_id, "narrative_compact.md", narrative_compact)
+    store.save_ter_file(trace_id, "narrative_full.md", narrative_full)
     store.save_ter_file(trace_id, "tool_metrics.md", tool_metrics)
     store.save_ter_file(trace_id, "context_metrics.md", context_metrics)
 
-    # Compression ratio: sanitized trace size vs narrative size.
+    # Compression ratio: sanitized trace size vs compact narrative size.
     sanitized_path = store.traces_dir / trace_id / "sanitized.json"
     raw_chars = sanitized_path.stat().st_size if sanitized_path.exists() else 0
-    compression_ratio = round(raw_chars / max(len(narrative), 1), 1) if raw_chars else 0.0
+    compression_ratio = round(raw_chars / max(len(narrative_compact), 1), 1) if raw_chars else 0.0
 
     stats = {
         "trace_id": trace_id,
         "sanitized_chars": raw_chars,
         "skeleton_chars": len(skeleton),
-        "narrative_chars": len(narrative),
-        "narrative_est_tokens": len(narrative) // 4,
+        "narrative_compact_chars": len(narrative_compact),
+        "narrative_full_chars": len(narrative_full),
+        "narrative_chars": len(narrative_compact),
+        "narrative_est_tokens": len(narrative_compact) // 4,
         "compression_ratio": compression_ratio,
         "tool_metrics_chars": len(tool_metrics),
         "context_metrics_chars": len(context_metrics),
     }
     logger.info(
-        "TER written for trace %s — narrative=%.1fKB (~%d tokens, %.1fx smaller) "
-        "skeleton=%.1fKB tool_metrics=%.1fKB context_metrics=%.1fKB",
+        "TER written for trace %s — narrative_compact=%.1fKB (~%d tokens, %.1fx smaller) "
+        "narrative_full=%.1fKB skeleton=%.1fKB tool_metrics=%.1fKB context_metrics=%.1fKB",
         trace_id,
-        len(narrative) / 1024,
+        len(narrative_compact) / 1024,
         stats["narrative_est_tokens"],
         compression_ratio,
+        len(narrative_full) / 1024,
         len(skeleton) / 1024,
         len(tool_metrics) / 1024,
         len(context_metrics) / 1024,
