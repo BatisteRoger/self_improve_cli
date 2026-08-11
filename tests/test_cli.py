@@ -206,6 +206,22 @@ def test_prompt_load(tmp_path):
     assert store.load_prompt("nonexistent") is None
 
 
+def test_prompt_pull_disabled_by_default(capsys, monkeypatch):
+    """`prompt pull` is blocked when ENABLE_PROMPT_HUB is not true."""
+    monkeypatch.delenv("ENABLE_PROMPT_HUB", raising=False)
+    assert main(["prompt", "pull", "test-prompt"]) == 1
+    err = capsys.readouterr().err
+    assert "disabled" in err.lower()
+
+
+def test_prompt_pull_disabled_when_false(capsys, monkeypatch):
+    """`prompt pull` is blocked when ENABLE_PROMPT_HUB=false."""
+    monkeypatch.setenv("ENABLE_PROMPT_HUB", "false")
+    assert main(["prompt", "pull", "test-prompt"]) == 1
+    err = capsys.readouterr().err
+    assert "disabled" in err.lower()
+
+
 def test_prompt_show_command(tmp_path, capsys):
     """`self-improve prompt show` prints a saved prompt."""
     store = TraceStore(data_root=tmp_path)

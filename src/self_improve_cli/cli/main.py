@@ -322,6 +322,12 @@ def _cmd_init(args: argparse.Namespace) -> int:
 
 def _cmd_prompt_pull(args: argparse.Namespace) -> int:
     """Pull a prompt from LangSmith Prompt Hub and save it locally."""
+    if os.environ.get("ENABLE_PROMPT_HUB", "").lower() != "true":
+        print(
+            "Prompt Hub access is disabled. Set ENABLE_PROMPT_HUB=true in .env to enable.",
+            file=sys.stderr,
+        )
+        return EXIT_ERROR
     from self_improve_cli.sources.langsmith import LangSmithSource
 
     source = LangSmithSource()
