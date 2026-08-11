@@ -1,0 +1,145 @@
+[
+  {
+    "id": "root-1",
+    "trace_id": "trace-1",
+    "parent_run_id": null,
+    "dotted_order": "20260101T000000000001Zroot-1",
+    "name": "agent",
+    "run_type": "chain",
+    "status": "success",
+    "start_time": "2026-01-01T00:00:00",
+    "end_time": "2026-01-01T00:00:06",
+    "total_tokens": 100,
+    "error": null,
+    "inputs": {
+      "messages": [
+        {"type": "human", "content": "What is 2+2? Use the calculator tool."}
+      ]
+    },
+    "outputs": {
+      "messages": [
+        {"type": "ai", "content": "2+2 = 4."}
+      ]
+    }
+  },
+  {
+    "id": "node-guardrails",
+    "trace_id": "trace-1",
+    "parent_run_id": "root-1",
+    "dotted_order": "20260101T000000000001Zroot-1.20260101T000000100001Znode-guardrails",
+    "name": "guardrails",
+    "run_type": "chain",
+    "status": "success",
+    "start_time": "2026-01-01T00:00:00",
+    "end_time": "2026-01-01T00:00:00",
+    "total_tokens": 0,
+    "error": null,
+    "inputs": {},
+    "outputs": {"guardrail": "safe"}
+  },
+  {
+    "id": "mw-1",
+    "trace_id": "trace-1",
+    "parent_run_id": "root-1",
+    "dotted_order": "20260101T000000000001Zroot-1.20260101T000000200001Zmw-1",
+    "name": "ExampleMiddleware.awrap_model_call",
+    "run_type": "chain",
+    "status": "success",
+    "start_time": "2026-01-01T00:00:00",
+    "end_time": "2026-01-01T00:00:02",
+    "total_tokens": 50,
+    "error": null,
+    "inputs": {},
+    "outputs": {}
+  },
+  {
+    "id": "llm-1",
+    "trace_id": "trace-1",
+    "parent_run_id": "mw-1",
+    "dotted_order": "20260101T000000000001Zroot-1.20260101T000000200001Zmw-1.20260101T000000300001Zllm-1",
+    "name": "ChatOpenAI",
+    "run_type": "llm",
+    "status": "success",
+    "start_time": "2026-01-01T00:00:00",
+    "end_time": "2026-01-01T00:00:02",
+    "total_tokens": 50,
+    "prompt_tokens": 40,
+    "completion_tokens": 10,
+    "error": null,
+    "inputs": {
+      "messages": [
+        [
+          {"lc": 1, "type": "constructor", "id": ["langchain", "schema", "messages", "SystemMessage"], "kwargs": {"content": "You are a helpful agent."}},
+          {"lc": 1, "type": "constructor", "id": ["langchain", "schema", "messages", "HumanMessage"], "kwargs": {"content": "What is 2+2? Use the calculator tool."}}
+        ]
+      ]
+    },
+    "outputs": {
+      "generations": [
+        [
+          {
+            "message": {
+              "id": ["langchain", "schema", "messages", "AIMessage"],
+              "kwargs": {
+                "content": "",
+                "tool_calls": [{"name": "calculator", "args": {"expression": "2+2"}, "id": "call-1"}]
+              }
+            }
+          }
+        ]
+      ]
+    }
+  },
+  {
+    "id": "tool-1",
+    "trace_id": "trace-1",
+    "parent_run_id": "root-1",
+    "dotted_order": "20260101T000000000001Zroot-1.20260101T000000400001Ztool-1",
+    "name": "calculator",
+    "run_type": "tool",
+    "status": "success",
+    "start_time": "2026-01-01T00:00:02",
+    "end_time": "2026-01-01T00:00:03",
+    "total_tokens": 0,
+    "error": null,
+    "inputs": {"expression": "2+2"},
+    "outputs": {"output": {"update": {"messages": [{"content": "4", "type": "tool"}]}}}
+  },
+  {
+    "id": "llm-2",
+    "trace_id": "trace-1",
+    "parent_run_id": "mw-1",
+    "dotted_order": "20260101T000000000001Zroot-1.20260101T000000500001Zmw-1.20260101T000000600001Zllm-2",
+    "name": "ChatOpenAI",
+    "run_type": "llm",
+    "status": "success",
+    "start_time": "2026-01-01T00:00:03",
+    "end_time": "2026-01-01T00:00:05",
+    "total_tokens": 50,
+    "prompt_tokens": 45,
+    "completion_tokens": 5,
+    "error": null,
+    "inputs": {
+      "messages": [
+        [
+          {"lc": 1, "type": "constructor", "id": ["langchain", "schema", "messages", "SystemMessage"], "kwargs": {"content": "You are a helpful agent."}},
+          {"lc": 1, "type": "constructor", "id": ["langchain", "schema", "messages", "HumanMessage"], "kwargs": {"content": "What is 2+2? Use the calculator tool."}},
+          {"lc": 1, "type": "constructor", "id": ["langchain", "schema", "messages", "AIMessage"], "kwargs": {"content": "", "tool_calls": [{"name": "calculator", "args": {"expression": "2+2"}, "id": "call-1"}]}},
+          {"lc": 1, "type": "constructor", "id": ["langchain", "schema", "messages", "ToolMessage"], "kwargs": {"content": "4", "tool_call_id": "call-1"}}
+        ]
+      ]
+    },
+    "outputs": {
+      "generations": [
+        [
+          {
+            "message": {
+              "id": ["langchain", "schema", "messages", "AIMessage"],
+              "kwargs": {"content": "2+2 = 4.", "tool_calls": []}
+            }
+          }
+        ]
+      ]
+    }
+  }
+]

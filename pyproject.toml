@@ -1,0 +1,75 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "self-improve-cli"
+version = "0.1.0"
+description = "Privacy-first CLI for inspecting AI-agent execution traces and identifying improvements"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+authors = [
+  { name = "Batiste Roger" },
+]
+keywords = ["langsmith", "ai-agents", "traces", "observability", "privacy", "anonymization", "cli"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Software Development :: Testing",
+  "Topic :: Software Development :: Debuggers",
+  "Typing :: Typed",
+]
+dependencies = [
+  "python-dotenv>=1.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/BatisteRoger/self_improve_cli"
+Repository = "https://github.com/BatisteRoger/self_improve_cli"
+Issues = "https://github.com/BatisteRoger/self_improve_cli/issues"
+
+[project.optional-dependencies]
+langsmith = [
+  "langsmith>=0.3.1",
+]
+privacy = [
+  "presidio>=2.2.361",
+]
+dev = [
+  "ruff",
+  "pytest>=9.0.2",
+  "pyright",
+]
+
+[project.scripts]
+self-improve = "self_improve_cli.cli.main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/self_improve_cli"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/self_improve_cli/SKILL.md" = "self_improve_cli/SKILL.md"
+"src/self_improve_cli/.env.example" = "self_improve_cli/.env.example"
+"src/self_improve_cli/py.typed" = "self_improve_cli/py.typed"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.pyright]
+include = ["src"]
+venvPath = "."
+venv = ".venv"
