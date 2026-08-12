@@ -588,7 +588,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_pull.add_argument(
         "--workspace",
         default=None,
-        help="LangSmith workspace ID for non-default workspaces (e.g. Workspace 2, Workspace 3, Whatever)",
+        help="LangSmith workspace ID for non-default workspaces (e.g. Workspace 2, Workspace 3)",
     )
     add_common_opts(p_pull)
     p_pull.set_defaults(func=_cmd_prompt_pull)

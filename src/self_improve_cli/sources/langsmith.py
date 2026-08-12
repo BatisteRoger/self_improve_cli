@@ -60,7 +60,9 @@ def _get_client(workspace_id: str | None = None) -> Any:
             "LANGSMITH_API_KEY is not set. Copy .env.example to .env and fill it in."
         )
     endpoint = os.environ.get("LANGSMITH_ENDPOINT", "https://api.smith.langchain.com")
-    logger.debug("Creating LangSmith client (endpoint=%s, workspace=%s)", endpoint, workspace_id or "default")
+    logger.debug(
+        "Creating LangSmith client (endpoint=%s, workspace=%s)", endpoint, workspace_id or "default"
+    )
     kwargs: dict[str, Any] = {"api_url": endpoint, "api_key": api_key}
     if workspace_id:
         kwargs["workspace_id"] = workspace_id

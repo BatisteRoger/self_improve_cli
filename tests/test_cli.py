@@ -386,11 +386,17 @@ def test_fetch_from_run_resolves_and_fetches(tmp_path, capsys, monkeypatch):
     monkeypatch.delenv("LANGSMITH_PROJECT", raising=False)
     monkeypatch.delenv("LANGCHAIN_PROJECT", raising=False)
 
-    rc = main([
-        "fetch", "run-abc", "--from-run",
-        "--data-dir", str(tmp_path),
-        "--format", "json",
-    ])
+    rc = main(
+        [
+            "fetch",
+            "run-abc",
+            "--from-run",
+            "--data-dir",
+            str(tmp_path),
+            "--format",
+            "json",
+        ]
+    )
     assert rc == 0
     out = capsys.readouterr().out
     data = json.loads(out)
@@ -407,10 +413,15 @@ def test_fetch_from_run_resolution_message_on_stderr(tmp_path, capsys, monkeypat
     monkeypatch.delenv("LANGSMITH_PROJECT", raising=False)
     monkeypatch.delenv("LANGCHAIN_PROJECT", raising=False)
 
-    rc = main([
-        "fetch", "run-abc", "--from-run",
-        "--data-dir", str(tmp_path),
-    ])
+    rc = main(
+        [
+            "fetch",
+            "run-abc",
+            "--from-run",
+            "--data-dir",
+            str(tmp_path),
+        ]
+    )
     assert rc == 0
     err = capsys.readouterr().err
     assert "Resolved run run-abc -> trace trace-resolved" in err
@@ -424,11 +435,16 @@ def test_fetch_without_from_run_does_not_resolve(tmp_path, capsys, monkeypatch):
     monkeypatch.delenv("LANGSMITH_PROJECT", raising=False)
     monkeypatch.delenv("LANGCHAIN_PROJECT", raising=False)
 
-    rc = main([
-        "fetch", "trace-resolved",
-        "--data-dir", str(tmp_path),
-        "--format", "json",
-    ])
+    rc = main(
+        [
+            "fetch",
+            "trace-resolved",
+            "--data-dir",
+            str(tmp_path),
+            "--format",
+            "json",
+        ]
+    )
     assert rc == 0
     out = capsys.readouterr().out
     data = json.loads(out)

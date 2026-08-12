@@ -132,11 +132,7 @@ def test_extract_message_without_prompt():
                 {
                     "lc": 1,
                     "type": "constructor",
-                    "kwargs": {
-                        "prompt": {
-                            "kwargs": {"template": "Only valid message."}
-                        }
-                    },
+                    "kwargs": {"prompt": {"kwargs": {"template": "Only valid message."}}},
                 },
             ]
         },
