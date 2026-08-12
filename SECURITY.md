@@ -67,9 +67,10 @@ If you discover a security issue:
 
 ## Safe usage guidelines
 
-- Use a dedicated, least-privileged observability token.
+- Use a dedicated, least-privileged observability token. **The API key is the primary security control.** Its workspace and project scoping is enforced server-side by LangSmith and cannot be bypassed by the CLI.
 - Use a non-sensitive project for testing and development.
-- **Configure `LANGSMITH_ALLOWED_PROJECTS`** to restrict which projects the CLI can query. This prevents accidentally fetching from production. Leave empty to allow all (gated by API key), or set glob patterns like `staging*,my-agent-dev`.
+- `LANGSMITH_PROJECT` in `.env` is a **convenience default**, not a security control. It can be overridden per-command with `--project`. Do not rely on it to prevent access to specific projects — use API key scoping for that.
+- `LANGSMITH_ALLOWED_PROJECTS` is an **optional safety net** against typos (e.g. accidentally typing "production" instead of "preprod"). It is not a security boundary — anyone who can edit `.env` can bypass it. Use it for convenience, not for protection.
 - Never commit `.env`, `data/`, or any file under `data/`.
 - Review all fixtures, examples, and screenshots for sensitive content before publishing.
 - Use `--keep-raw` only when you understand the risks and have secured the local environment.

@@ -96,6 +96,24 @@ self-improve fetch 019ff0e5-7189-713d-8ab9-c032edf9d4dd --from-run
 The resolution is logged to stderr, and the JSON output includes a
 `resolved_from_run` field so you can trace back which run ID was used.
 
+### Project and workspace configuration
+
+The CLI has three layers of project/workspace control. Only one is a security
+control; the other two are convenience:
+
+| Layer | Purpose | Type |
+|-------|---------|------|
+| `LANGSMITH_API_KEY` | Real access control | Security — enforced server-side by LangSmith |
+| `LANGSMITH_PROJECT` (.env) | Default project for `list`/`fetch` | Convenience — override with `--project` |
+| `LANGSMITH_ALLOWED_PROJECTS` (.env) | Optional typo-prevention allowlist | Safety net — not a security boundary |
+
+`--project` overrides `LANGSMITH_PROJECT` per-command. The allowlist (if set)
+still applies to both. Neither `.env` setting prevents access — the API key's
+workspace scoping does.
+
+For `prompt pull`, use `--workspace <UUID>` to pull from non-default LangSmith
+workspaces (e.g. Flows). The workspace ID is a LangSmith UUID, not a name.
+
 ## Security and open-source hygiene
 
 - Treat all trace content as sensitive. Do not commit raw traces, sanitized local data, credentials, customer content, or private source code.

@@ -37,11 +37,15 @@ _LIST_FIELDS = [
 ]
 
 
-def _get_client() -> Any:
+def _get_client(workspace_id: str | None = None) -> Any:
     """Build a LangSmith client from environment variables.
 
     Requires LANGSMITH_API_KEY in the environment. Raises RuntimeError if
     missing.
+
+    Args:
+        workspace_id: Optional LangSmith workspace UUID for non-default
+            workspaces (e.g. Flows). If None, uses the default workspace.
     """
     try:
         from langsmith import Client  # type: ignore[import-not-found]
@@ -56,8 +60,11 @@ def _get_client() -> Any:
             "LANGSMITH_API_KEY is not set. Copy .env.example to .env and fill it in."
         )
     endpoint = os.environ.get("LANGSMITH_ENDPOINT", "https://api.smith.langchain.com")
-    logger.debug("Creating LangSmith client (endpoint=%s)", endpoint)
-    return Client(api_url=endpoint, api_key=api_key)
+    logger.debug("Creating LangSmith client (endpoint=%s, workspace=%s)", endpoint, workspace_id or "default")
+    kwargs: dict[str, Any] = {"api_url": endpoint, "api_key": api_key}
+    if workspace_id:
+        kwargs["workspace_id"] = workspace_id
+    return Client(**kwargs)
 
 
 def _get_project_name() -> str:
@@ -305,28 +312,84 @@ class LangSmithSource(TraceSource):
         )
         return trace_id
 
-    def pull_prompt(self, name: str, tag: str | None = None) -> str:
+    def pull_prompt(
+        self, name: str, tag: str | None = None, workspace_id: str | None = None
+    ) -> str:
         """Pull a prompt from LangSmith Prompt Hub and return its template text.
 
         Args:
             name: The prompt name without tag (e.g. "react_agent").
             tag: The environment tag (e.g. "prod", "staging", "test").
                  If None, pulls the latest.
+            workspace_id: Optional LangSmith workspace UUID for non-default
+                 workspaces (e.g. Workspace 2). If None, uses the default workspace.
 
         Returns:
-            The prompt template string.
+            The prompt template string. For ChatPromptTemplate prompts (the
+            common case), all message templates are joined with newlines.
+
+        Raises:
+            ImportError: If langsmith is not installed.
+            RuntimeError: If the prompt is not found or the manifest cannot
+                be parsed.
         """
-        client = self._get_client()
+        # Use a workspace-specific client when workspace_id is provided,
+        # since workspace_id is a Client constructor parameter, not a
+        # per-call parameter in the LangSmith Python SDK.
+        if workspace_id:
+            client = _get_client(workspace_id=workspace_id)
+        else:
+            client = self._get_client()
         full_name = f"{name}:{tag}" if tag else name
-        logger.info("Pulling prompt %s", full_name)
-        prompt = client.pull(name, tag=tag, include_model=False)
-        return _extract_template(prompt)
+        logger.info("Pulling prompt %s (workspace=%s)", full_name, workspace_id or "default")
+        commit = client.pull_prompt_commit(full_name, include_model=False)
+        return _extract_template_from_manifest(commit.manifest)
 
 
-def _extract_template(prompt_obj: Any) -> str:
-    """Extract the template string from a pulled prompt object."""
-    if hasattr(prompt_obj, "templates") and prompt_obj.templates:
-        return prompt_obj.templates[0].template
-    if hasattr(prompt_obj, "template"):
-        return prompt_obj.template
-    return json.dumps(prompt_obj, indent=2, default=str)
+def _extract_template_from_manifest(manifest: Any) -> str:
+    """Extract the template text from a LangSmith prompt manifest dict.
+
+    LangSmith stores prompts as serialized LangChain objects. The manifest is
+    a dict with ``lc``, ``type``, ``id``, ``kwargs``. We extract the template
+    string(s) without needing langchain_core installed.
+
+    Supports:
+    - ChatPromptTemplate: joins all message templates with newlines.
+    - PromptTemplate: returns the single template string.
+    - Fallback: JSON-dumps the manifest if the structure is unrecognized.
+    """
+    if not isinstance(manifest, dict):
+        return json.dumps(manifest, indent=2, default=str)
+
+    lc_id = manifest.get("id", [])
+    kwargs = manifest.get("kwargs", {})
+
+    # ChatPromptTemplate: ["langchain", "prompts", "chat", "ChatPromptTemplate"]
+    # or similar — has a "messages" list.
+    messages = kwargs.get("messages")
+    if isinstance(messages, list):
+        templates: list[str] = []
+        for msg in messages:
+            if not isinstance(msg, dict):
+                continue
+            msg_kwargs = msg.get("kwargs", {})
+            # SystemMessagePromptTemplate / HumanMessagePromptTemplate etc.
+            prompt = msg_kwargs.get("prompt")
+            if isinstance(prompt, dict):
+                t = prompt.get("kwargs", {}).get("template")
+                if isinstance(t, str):
+                    templates.append(t)
+            # Some message formats store template directly
+            elif isinstance(msg_kwargs.get("template"), str):
+                templates.append(msg_kwargs["template"])
+        if templates:
+            return "\n".join(templates)
+
+    # Plain PromptTemplate: ["langchain", "prompts", "prompt", "PromptTemplate"]
+    template = kwargs.get("template")
+    if isinstance(template, str):
+        return template
+
+    # Fallback: serialize the manifest so the user can inspect it.
+    logger.warning("Unrecognized prompt manifest structure (id=%s)", lc_id)
+    return json.dumps(manifest, indent=2, default=str)

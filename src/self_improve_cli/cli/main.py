@@ -343,7 +343,7 @@ def _cmd_prompt_pull(args: argparse.Namespace) -> int:
 
     source = LangSmithSource()
     tag = args.tag or "latest"
-    content = source.pull_prompt(args.name, tag=args.tag)
+    content = source.pull_prompt(args.name, tag=args.tag, workspace_id=args.workspace)
     store = _get_store(args)
     path = store.save_prompt(args.name, tag, content)
     result = {
@@ -585,6 +585,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--tag", default=None, help="Tag (e.g. prod, staging, test). Default: latest"
     )
     p_pull.add_argument("--project", default=None, help="LangSmith project name")
+    p_pull.add_argument(
+        "--workspace",
+        default=None,
+        help="LangSmith workspace ID for non-default workspaces (e.g. Workspace 2, Workspace 3, Whatever)",
+    )
     add_common_opts(p_pull)
     p_pull.set_defaults(func=_cmd_prompt_pull)
 
@@ -633,14 +638,10 @@ def main(argv: list[str] | None = None) -> int:
     if not hasattr(args, "keep_raw"):
         args.keep_raw = False
 
-    # Enforce --project exclusivity: if .env sets LANGSMITH_PROJECT, refuse --project.
-    env_project = os.environ.get("LANGSMITH_PROJECT") or os.environ.get("LANGCHAIN_PROJECT")
-    if env_project and getattr(args, "project", None) is not None:
-        print(
-            "Error: --project is not allowed when .env sets LANGSMITH_PROJECT. Edit .env instead.",
-            file=sys.stderr,
-        )
-        return EXIT_USAGE
+    # --project overrides LANGSMITH_PROJECT (.env default), but is still
+    # checked against the optional LANGSMITH_ALLOWED_PROJECTS allowlist.
+    # Neither .env nor --project is a security control — security is enforced
+    # by the API key's workspace scoping on the LangSmith server side.
 
     try:
         return args.func(args)

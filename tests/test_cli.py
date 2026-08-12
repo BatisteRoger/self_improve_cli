@@ -237,6 +237,8 @@ def test_prompt_load(tmp_path):
 def test_prompt_pull_disabled_by_default(capsys, monkeypatch):
     """`prompt pull` is blocked when ENABLE_PROMPT_HUB is not true."""
     monkeypatch.delenv("ENABLE_PROMPT_HUB", raising=False)
+    # Prevent _load_env from reloading .env and re-setting the var
+    monkeypatch.setattr("self_improve_cli.cli.main._load_env", lambda: None)
     assert main(["prompt", "pull", "test-prompt"]) == 1
     err = capsys.readouterr().err
     assert "disabled" in err.lower()
@@ -245,6 +247,7 @@ def test_prompt_pull_disabled_by_default(capsys, monkeypatch):
 def test_prompt_pull_disabled_when_false(capsys, monkeypatch):
     """`prompt pull` is blocked when ENABLE_PROMPT_HUB=false."""
     monkeypatch.setenv("ENABLE_PROMPT_HUB", "false")
+    monkeypatch.setattr("self_improve_cli.cli.main._load_env", lambda: None)
     assert main(["prompt", "pull", "test-prompt"]) == 1
     err = capsys.readouterr().err
     assert "disabled" in err.lower()

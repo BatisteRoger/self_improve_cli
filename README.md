@@ -44,9 +44,10 @@ This CLI is not a replacement for LangSmith — it's a **compression and analysi
 ```bash
 pip install self-improve-cli[langsmith]
 self-improve init              # Create .env from template
-# Edit .env with your LangSmith API key and project name
+# Edit .env with your LangSmith API key
 self-improve skill             # List available skills
-self-improve list --limit 10   # L0: discover recent traces
+self-improve list --limit 10   # L0: discover recent traces (uses LANGSMITH_PROJECT from .env)
+self-improve list --project other-project --limit 10  # Override project per-command
 self-improve fetch <trace_id>  # Download, anonymize, and build all representations
 self-improve fetch <run_id> --from-run  # Same, but resolve a run ID first
 self-improve narrative <trace_id>   # L2: read the trace story
@@ -80,6 +81,7 @@ Pull prompts from LangSmith Prompt Hub and save them as local `.md` files your a
 
 ```bash
 self-improve prompt pull my-agent --tag prod   # Download a prompt
+self-improve prompt pull my-agent --workspace <UUID>  # From a non-default workspace
 self-improve prompt list                        # List saved prompts
 self-improve prompt show my-agent --tag prod    # Show a saved prompt
 self-improve prompt diff my-agent <trace_id>    # Compare vs what a trace used
