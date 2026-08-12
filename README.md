@@ -48,6 +48,7 @@ self-improve init              # Create .env from template
 self-improve skill             # List available skills
 self-improve list --limit 10   # L0: discover recent traces
 self-improve fetch <trace_id>  # Download, anonymize, and build all representations
+self-improve fetch <run_id> --from-run  # Same, but resolve a run ID first
 self-improve narrative <trace_id>   # L2: read the trace story
 self-improve run-detail <trace_id> <run_id>  # L3: drill into one run
 ```
@@ -106,7 +107,7 @@ ATI documents are created by the `document-ati` skill and stored under `data/ati
 
 ## Where to learn more
 
-- [AGENTS.md](AGENTS.md) — project values, architecture, non-negotiable principles, and working rules.
+- [AGENTS.md](AGENTS.md) — project values, architecture, non-negotiable principles, working rules, and CLI usage details.
 - [SECURITY.md](SECURITY.md) — threat model, privacy guarantees, and reporting process.
 - [CONTRIBUTING.md](CONTRIBUTING.md) — development setup, tests, and review expectations.
 

@@ -81,6 +81,21 @@ Dependency direction: `source -> canonical model -> privacy/storage -> determini
 
 Keep the core representation and metrics layers free of network calls and LLM calls. This preserves recomputability and makes them easy to test.
 
+## CLI usage details
+
+### Fetching from a run ID
+
+LangSmith trace URLs often contain a **run ID** rather than a trace ID. Use
+`--from-run` to have the CLI resolve the run ID to its parent trace ID before
+fetching:
+
+```bash
+self-improve fetch 019ff0e5-7189-713d-8ab9-c032edf9d4dd --from-run
+```
+
+The resolution is logged to stderr, and the JSON output includes a
+`resolved_from_run` field so you can trace back which run ID was used.
+
 ## Security and open-source hygiene
 
 - Treat all trace content as sensitive. Do not commit raw traces, sanitized local data, credentials, customer content, or private source code.

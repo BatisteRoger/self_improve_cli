@@ -9,6 +9,34 @@ from self_improve_cli.domain import Message, RunType, ToolCall, Trace
 from self_improve_cli.storage import TraceStore
 from tests.helpers import make_msg, make_root, make_run
 
+# ---------------------------------------------------------------------------
+# Fake LangSmithSource for fetch --from-run tests
+# ---------------------------------------------------------------------------
+
+
+class _FakeSource:
+    """Minimal fake source for offline fetch tests.
+
+    Returns a fixed trace_id when resolving a run_id, and a small synthetic
+    trace when fetching.
+    """
+
+    def __init__(self, project_name=None, **_kwargs):
+        self.project_name = project_name
+
+    def resolve_trace_id(self, run_id: str) -> str:
+        if run_id == "run-abc":
+            return "trace-resolved"
+        raise ValueError(f"Unknown run_id: {run_id}")
+
+    def fetch_trace(self, trace_id: str) -> Trace:
+        return Trace(
+            trace_id=trace_id,
+            runs=[make_root(trace_id=trace_id)],
+            sanitized=False,
+            source="test",
+        )
+
 
 @pytest.fixture
 def saved_trace(tmp_path, monkeypatch):
@@ -340,3 +368,66 @@ def test_ati_show_not_found(tmp_path, capsys):
     assert main(["ati", "show", "nonexistent", "--data-dir", str(tmp_path)]) == 1
     err = capsys.readouterr().err
     assert "not found" in err
+
+
+# ---------------------------------------------------------------------------
+# fetch --from-run tests
+# ---------------------------------------------------------------------------
+
+
+def test_fetch_from_run_resolves_and_fetches(tmp_path, capsys, monkeypatch):
+    """`fetch --from-run <run_id>` resolves the run_id to a trace_id and fetches."""
+    import self_improve_cli.sources.langsmith as ls_module
+
+    monkeypatch.setattr(ls_module, "LangSmithSource", _FakeSource)
+    monkeypatch.delenv("LANGSMITH_PROJECT", raising=False)
+    monkeypatch.delenv("LANGCHAIN_PROJECT", raising=False)
+
+    rc = main([
+        "fetch", "run-abc", "--from-run",
+        "--data-dir", str(tmp_path),
+        "--format", "json",
+    ])
+    assert rc == 0
+    out = capsys.readouterr().out
+    data = json.loads(out)
+    assert data["trace_id"] == "trace-resolved"
+    assert data["resolved_from_run"] == "run-abc"
+    assert data["runs"] == 1
+
+
+def test_fetch_from_run_resolution_message_on_stderr(tmp_path, capsys, monkeypatch):
+    """`fetch --from-run` prints the resolution to stderr (diagnostics channel)."""
+    import self_improve_cli.sources.langsmith as ls_module
+
+    monkeypatch.setattr(ls_module, "LangSmithSource", _FakeSource)
+    monkeypatch.delenv("LANGSMITH_PROJECT", raising=False)
+    monkeypatch.delenv("LANGCHAIN_PROJECT", raising=False)
+
+    rc = main([
+        "fetch", "run-abc", "--from-run",
+        "--data-dir", str(tmp_path),
+    ])
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "Resolved run run-abc -> trace trace-resolved" in err
+
+
+def test_fetch_without_from_run_does_not_resolve(tmp_path, capsys, monkeypatch):
+    """`fetch <trace_id>` (without --from-run) does not call resolve_trace_id."""
+    import self_improve_cli.sources.langsmith as ls_module
+
+    monkeypatch.setattr(ls_module, "LangSmithSource", _FakeSource)
+    monkeypatch.delenv("LANGSMITH_PROJECT", raising=False)
+    monkeypatch.delenv("LANGCHAIN_PROJECT", raising=False)
+
+    rc = main([
+        "fetch", "trace-resolved",
+        "--data-dir", str(tmp_path),
+        "--format", "json",
+    ])
+    assert rc == 0
+    out = capsys.readouterr().out
+    data = json.loads(out)
+    assert data["trace_id"] == "trace-resolved"
+    assert "resolved_from_run" not in data

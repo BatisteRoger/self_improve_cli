@@ -284,6 +284,27 @@ class LangSmithSource(TraceSource):
             source="langsmith",
         )
 
+    def resolve_trace_id(self, run_id: str) -> str:
+        """Resolve a run ID to its parent trace ID.
+
+        Uses the LangSmith SDK's read_run to fetch the run metadata and
+        extract its trace_id. This is useful when the user only has a run ID
+        (e.g. from a LangSmith trace URL) and needs the trace ID to fetch
+        the full trace.
+        """
+        client = self._get_client()
+        logger.info("Resolving run %s to trace_id", run_id)
+        start = time.monotonic()
+        sdk_run = client.read_run(run_id)
+        trace_id = str(sdk_run.trace_id)
+        logger.info(
+            "Resolved run %s -> trace_id %s in %.2fs",
+            run_id,
+            trace_id,
+            time.monotonic() - start,
+        )
+        return trace_id
+
     def pull_prompt(self, name: str, tag: str | None = None) -> str:
         """Pull a prompt from LangSmith Prompt Hub and return its template text.
 

@@ -150,7 +150,15 @@ def _cmd_fetch(args: argparse.Namespace) -> int:
     from self_improve_cli.sources.langsmith import LangSmithSource
 
     source = LangSmithSource(project_name=args.project)
-    trace = source.fetch_trace(args.trace_id)
+
+    # Resolve run_id -> trace_id if the user passed --from-run.
+    if getattr(args, "from_run", False):
+        trace_id = source.resolve_trace_id(args.trace_id)
+        print(f"Resolved run {args.trace_id} -> trace {trace_id}", file=sys.stderr)
+    else:
+        trace_id = args.trace_id
+
+    trace = source.fetch_trace(trace_id)
 
     # Save raw BEFORE anonymization (anonymize_trace mutates in place).
     store = _get_store(args)
@@ -162,10 +170,10 @@ def _cmd_fetch(args: argparse.Namespace) -> int:
 
     sanitized_path = store.save_sanitized(trace)
 
-    stats = write_ter(args.trace_id, trace.runs, store)
+    stats = write_ter(trace_id, trace.runs, store)
 
     result = {
-        "trace_id": args.trace_id,
+        "trace_id": trace_id,
         "runs": len(trace.runs),
         "sanitized": True,
         "sanitization_report": report.to_dict(),
@@ -174,6 +182,8 @@ def _cmd_fetch(args: argparse.Namespace) -> int:
         "raw_saved": args.keep_raw,
         "ter_stats": stats,
     }
+    if getattr(args, "from_run", False):
+        result["resolved_from_run"] = args.trace_id
     _output(result, args)
     return EXIT_OK
 
@@ -502,6 +512,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--keep-raw",
         action="store_true",
         help="Also save a raw (unanonymized) copy locally. Use with caution.",
+    )
+    p.add_argument(
+        "--from-run",
+        action="store_true",
+        help="Treat the positional argument as a run ID and resolve it to its "
+        "parent trace ID before fetching. Useful when you only have a run ID "
+        "(e.g. from a LangSmith trace URL).",
     )
     p.add_argument("trace_id")
     add_common_opts(p)

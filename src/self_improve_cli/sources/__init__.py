@@ -32,6 +32,15 @@ class TraceSource(ABC):
         """Download all runs of a trace and return a canonical Trace."""
         ...
 
+    @abstractmethod
+    def resolve_trace_id(self, run_id: str) -> str:
+        """Resolve a run ID to its parent trace ID.
+
+        Useful when the user only has a run ID (e.g. from a LangSmith URL)
+        and needs the trace ID to fetch the full trace.
+        """
+        ...
+
 
 def _content_text(content: Any) -> str:
     """Extract plain text from a message content (string or block list)."""
