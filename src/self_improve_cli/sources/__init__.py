@@ -10,8 +10,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any
 
+from self_improve_cli.domain import ProjectSummary, RunResolution, RunSummary, Trace
 from self_improve_cli.domain import Run as Run
-from self_improve_cli.domain import RunSummary, Trace
 
 
 class TraceSource(ABC):
@@ -28,17 +28,30 @@ class TraceSource(ABC):
         ...
 
     @abstractmethod
-    def fetch_trace(self, trace_id: str) -> Trace:
-        """Download all runs of a trace and return a canonical Trace."""
+    def fetch_trace(self, trace_id: str, project_id: str | None = None) -> Trace:
+        """Download all runs of a trace and return a canonical Trace.
+
+        When ``project_id`` is provided, it is used to scope the query instead
+        of the configured project name. This matters when the trace lives in a
+        different project than the default one (e.g. when resolving from a run
+        ID that belongs to another project).
+        """
         ...
 
     @abstractmethod
-    def resolve_trace_id(self, run_id: str) -> str:
-        """Resolve a run ID to its parent trace ID.
+    def resolve_trace_id(self, run_id: str) -> RunResolution:
+        """Resolve a run ID to its parent trace ID and project.
 
         Useful when the user only has a run ID (e.g. from a LangSmith URL)
-        and needs the trace ID to fetch the full trace.
+        and needs the trace ID to fetch the full trace. Returns both the
+        trace ID and the project/session ID the run belongs to, so the
+        caller can fetch the trace from the correct project.
         """
+        ...
+
+    @abstractmethod
+    def list_projects(self, limit: int = 50) -> list[ProjectSummary]:
+        """List accessible projects, most recent first."""
         ...
 
 

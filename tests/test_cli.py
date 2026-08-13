@@ -5,7 +5,7 @@ import json
 import pytest
 
 from self_improve_cli.cli.main import build_parser, main
-from self_improve_cli.domain import Message, RunType, ToolCall, Trace
+from self_improve_cli.domain import Message, RunResolution, RunType, ToolCall, Trace
 from self_improve_cli.storage import TraceStore
 from tests.helpers import make_msg, make_root, make_run
 
@@ -17,25 +17,32 @@ from tests.helpers import make_msg, make_root, make_run
 class _FakeSource:
     """Minimal fake source for offline fetch tests.
 
-    Returns a fixed trace_id when resolving a run_id, and a small synthetic
-    trace when fetching.
+    Returns a fixed trace_id (and optional project_id) when resolving a
+    run_id, and a small synthetic trace when fetching.
     """
 
     def __init__(self, project_name=None, **_kwargs):
         self.project_name = project_name
+        self.fetch_calls: list[dict] = []
 
-    def resolve_trace_id(self, run_id: str) -> str:
+    def resolve_trace_id(self, run_id: str) -> RunResolution:
         if run_id == "run-abc":
-            return "trace-resolved"
+            return RunResolution(trace_id="trace-resolved", project_id="proj-uuid-abc")
+        if run_id == "run-no-proj":
+            return RunResolution(trace_id="trace-no-proj", project_id=None)
         raise ValueError(f"Unknown run_id: {run_id}")
 
-    def fetch_trace(self, trace_id: str) -> Trace:
+    def fetch_trace(self, trace_id: str, project_id: str | None = None) -> Trace:
+        self.fetch_calls.append({"trace_id": trace_id, "project_id": project_id})
         return Trace(
             trace_id=trace_id,
             runs=[make_root(trace_id=trace_id)],
             sanitized=False,
             source="test",
         )
+
+    def list_projects(self, limit: int = 50):
+        return []
 
 
 @pytest.fixture
@@ -450,3 +457,162 @@ def test_fetch_without_from_run_does_not_resolve(tmp_path, capsys, monkeypatch):
     data = json.loads(out)
     assert data["trace_id"] == "trace-resolved"
     assert "resolved_from_run" not in data
+
+
+def test_fetch_from_run_passes_project_id_to_fetch(tmp_path, capsys, monkeypatch):
+    """`fetch --from-run` passes the resolved project_id to fetch_trace."""
+    import self_improve_cli.sources.langsmith as ls_module
+
+    fake_instances: list[_FakeSource] = []
+
+    class _CapturingFakeSource(_FakeSource):
+        def __init__(self, project_name=None, **_kwargs):
+            super().__init__(project_name, **_kwargs)
+            fake_instances.append(self)
+
+    monkeypatch.setattr(ls_module, "LangSmithSource", _CapturingFakeSource)
+    monkeypatch.delenv("LANGSMITH_PROJECT", raising=False)
+    monkeypatch.delenv("LANGCHAIN_PROJECT", raising=False)
+
+    rc = main(
+        [
+            "fetch",
+            "run-abc",
+            "--from-run",
+            "--data-dir",
+            str(tmp_path),
+            "--format",
+            "json",
+        ]
+    )
+    assert rc == 0
+    assert len(fake_instances) == 1
+    assert fake_instances[0].fetch_calls == [
+        {"trace_id": "trace-resolved", "project_id": "proj-uuid-abc"}
+    ]
+
+
+def test_fetch_from_run_without_project_id(tmp_path, capsys, monkeypatch):
+    """`fetch --from-run` works when the resolved run has no session_id."""
+    import self_improve_cli.sources.langsmith as ls_module
+
+    monkeypatch.setattr(ls_module, "LangSmithSource", _FakeSource)
+    monkeypatch.delenv("LANGSMITH_PROJECT", raising=False)
+    monkeypatch.delenv("LANGCHAIN_PROJECT", raising=False)
+
+    rc = main(
+        [
+            "fetch",
+            "run-no-proj",
+            "--from-run",
+            "--data-dir",
+            str(tmp_path),
+            "--format",
+            "json",
+        ]
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    data = json.loads(out)
+    assert data["trace_id"] == "trace-no-proj"
+
+
+def test_fetch_empty_trace_warns_on_stderr(tmp_path, capsys, monkeypatch):
+    """`fetch` warns on stderr when the trace has 0 runs."""
+    import self_improve_cli.sources.langsmith as ls_module
+
+    class _EmptySource(_FakeSource):
+        def fetch_trace(self, trace_id: str, project_id: str | None = None) -> Trace:
+            self.fetch_calls.append({"trace_id": trace_id, "project_id": project_id})
+            return Trace(trace_id=trace_id, runs=[], sanitized=False, source="test")
+
+    monkeypatch.setattr(ls_module, "LangSmithSource", _EmptySource)
+    monkeypatch.delenv("LANGSMITH_PROJECT", raising=False)
+    monkeypatch.delenv("LANGCHAIN_PROJECT", raising=False)
+
+    rc = main(
+        [
+            "fetch",
+            "trace-empty",
+            "--data-dir",
+            str(tmp_path),
+        ]
+    )
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "No runs found" in err
+    assert "list-projects" in err
+
+
+def test_fetch_from_run_empty_trace_warns_with_project_id(tmp_path, capsys, monkeypatch):
+    """`fetch --from-run` warns with project_id context when 0 runs are found."""
+    import self_improve_cli.sources.langsmith as ls_module
+
+    class _EmptySource(_FakeSource):
+        def fetch_trace(self, trace_id: str, project_id: str | None = None) -> Trace:
+            self.fetch_calls.append({"trace_id": trace_id, "project_id": project_id})
+            return Trace(trace_id=trace_id, runs=[], sanitized=False, source="test")
+
+    monkeypatch.setattr(ls_module, "LangSmithSource", _EmptySource)
+    monkeypatch.delenv("LANGSMITH_PROJECT", raising=False)
+    monkeypatch.delenv("LANGCHAIN_PROJECT", raising=False)
+
+    rc = main(
+        [
+            "fetch",
+            "run-abc",
+            "--from-run",
+            "--data-dir",
+            str(tmp_path),
+        ]
+    )
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "No runs found" in err
+    assert "proj-uuid-abc" in err
+
+
+# ---------------------------------------------------------------------------
+# list-projects command tests
+# ---------------------------------------------------------------------------
+
+
+def test_list_projects_command(tmp_path, capsys, monkeypatch):
+    """`list-projects` lists accessible LangSmith projects."""
+    import self_improve_cli.sources.langsmith as ls_module
+
+    class _ProjectsSource(_FakeSource):
+        def list_projects(self, limit: int = 50):
+            return [
+                type("P", (), {"id": "uuid-1", "name": "my-agent-dev", "run_count": 42})(),
+                type("P", (), {"id": "uuid-2", "name": "my-agent-prod", "run_count": None})(),
+            ]
+
+    monkeypatch.setattr(ls_module, "LangSmithSource", _ProjectsSource)
+
+    rc = main(["list-projects", "--data-dir", str(tmp_path)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "my-agent-dev" in out
+    assert "uuid-1" in out
+    assert "runs=42" in out
+    assert "my-agent-prod" in out
+
+
+def test_list_projects_json_format(tmp_path, capsys, monkeypatch):
+    """`list-projects --format json` outputs structured JSON."""
+    import self_improve_cli.sources.langsmith as ls_module
+
+    class _ProjectsSource(_FakeSource):
+        def list_projects(self, limit: int = 50):
+            return [
+                type("P", (), {"id": "uuid-1", "name": "my-agent-dev", "run_count": 42})(),
+            ]
+
+    monkeypatch.setattr(ls_module, "LangSmithSource", _ProjectsSource)
+
+    rc = main(["list-projects", "--data-dir", str(tmp_path), "--format", "json"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    data = json.loads(out)
+    assert data == [{"id": "uuid-1", "name": "my-agent-dev", "run_count": 42}]

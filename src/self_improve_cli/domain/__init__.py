@@ -123,3 +123,27 @@ def run_to_summary(run: Run) -> RunSummary:
         total_tokens=run.total_tokens,
         error=run.error,
     )
+
+
+@dataclass
+class RunResolution:
+    """Result of resolving a run ID to its trace and project.
+
+    trace_id: the parent trace ID of the run.
+    project_id: the LangSmith session/project UUID the run belongs to.
+        Use this as ``project_id`` in ``list_runs`` to fetch the full trace
+        from the correct project, even when it differs from the configured
+        default project.
+    """
+
+    trace_id: str
+    project_id: str | None = None
+
+
+@dataclass
+class ProjectSummary:
+    """Lightweight project listing for L0 discovery."""
+
+    id: str
+    name: str
+    run_count: int | None = None

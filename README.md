@@ -43,16 +43,27 @@ This CLI is not a replacement for LangSmith — it's a **compression and analysi
 
 ```bash
 pip install self-improve-cli[langsmith]
-self-improve init              # Create .env from template
-# Edit .env with your LangSmith API key
-self-improve skill             # List available skills
-self-improve list --limit 10   # L0: discover recent traces (uses LANGSMITH_PROJECT from .env)
-self-improve list --project other-project --limit 10  # Override project per-command
-self-improve fetch <trace_id>  # Download, anonymize, and build all representations
-self-improve fetch <run_id> --from-run  # Same, but resolve a run ID first
-self-improve narrative <trace_id>   # L2: read the trace story
-self-improve run-detail <trace_id> <run_id>  # L3: drill into one run
 ```
+
+Or, from a dev checkout managed with [uv](https://docs.astral.sh/uv/), prefix
+every command with `uv run` — do **not** call the `.venv\Scripts\self-improve`
+executable directly:
+
+```bash
+uv run self-improve init              # Create .env from template
+# Edit .env with your LangSmith API key
+uv run self-improve skill             # List available skills
+uv run self-improve list --limit 10   # L0: discover recent traces (uses LANGSMITH_PROJECT from .env)
+uv run self-improve list --project other-project --limit 10  # Override project per-command
+uv run self-improve list-projects     # L0: discover accessible project names
+uv run self-improve fetch <trace_id>  # Download, anonymize, and build all representations
+uv run self-improve fetch <run_id> --from-run  # Same, but resolve a run ID first (auto-detects project)
+uv run self-improve narrative <trace_id>   # L2: read the trace story
+uv run self-improve run-detail <trace_id> <run_id>  # L3: drill into one run
+```
+
+The examples in the rest of this README use the bare `self-improve` form for
+brevity; prepend `uv run` when working from the source checkout.
 
 ## Skills
 

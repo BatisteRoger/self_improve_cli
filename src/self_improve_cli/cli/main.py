@@ -145,20 +145,66 @@ def _cmd_list_runs(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _cmd_list_projects(args: argparse.Namespace) -> int:
+    """List accessible LangSmith projects."""
+    from self_improve_cli.sources.langsmith import LangSmithSource
+
+    source = LangSmithSource()
+    projects = source.list_projects(limit=args.limit)
+    if args.format == "json":
+        print(
+            json.dumps(
+                [
+                    {"id": p.id, "name": p.name, "run_count": p.run_count}
+                    for p in projects
+                ],
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
+    else:
+        for p in projects:
+            runs = f"  runs={p.run_count}" if p.run_count is not None else ""
+            print(f"{p.name}  id={p.id}{runs}")
+    return EXIT_OK
+
+
 def _cmd_fetch(args: argparse.Namespace) -> int:
     """Fetch a trace, anonymize it, and persist the sanitized version."""
     from self_improve_cli.sources.langsmith import LangSmithSource
 
     source = LangSmithSource(project_name=args.project)
 
+    project_id: str | None = None
+
     # Resolve run_id -> trace_id if the user passed --from-run.
     if getattr(args, "from_run", False):
-        trace_id = source.resolve_trace_id(args.trace_id)
-        print(f"Resolved run {args.trace_id} -> trace {trace_id}", file=sys.stderr)
+        resolution = source.resolve_trace_id(args.trace_id)
+        trace_id = resolution.trace_id
+        project_id = resolution.project_id
+        print(
+            f"Resolved run {args.trace_id} -> trace {trace_id}"
+            + (f" (project_id={project_id})" if project_id else ""),
+            file=sys.stderr,
+        )
     else:
         trace_id = args.trace_id
 
-    trace = source.fetch_trace(trace_id)
+    trace = source.fetch_trace(trace_id, project_id=project_id)
+
+    # Warn on empty traces — likely a project mismatch.
+    if not trace.runs:
+        hint = (
+            "No runs found. The trace may live in a different project than the "
+            "configured one. Try `self-improve list-projects` to discover project "
+            "names, then `self-improve fetch <trace_id> --project <name>`."
+        )
+        if project_id:
+            hint = (
+                f"No runs found for trace {trace_id} in project_id={project_id}. "
+                "The trace may be empty or access may be restricted."
+            )
+        print(f"Warning: {hint}", file=sys.stderr)
 
     # Save raw BEFORE anonymization (anonymize_trace mutates in place).
     store = _get_store(args)
@@ -172,7 +218,7 @@ def _cmd_fetch(args: argparse.Namespace) -> int:
 
     stats = write_ter(trace_id, trace.runs, store)
 
-    result = {
+    result: dict[str, Any] = {
         "trace_id": trace_id,
         "runs": len(trace.runs),
         "sanitized": True,
@@ -504,6 +550,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--limit", type=int, default=10)
     add_common_opts(p)
     p.set_defaults(func=_cmd_list_runs)
+
+    # list-projects
+    p = sub.add_parser("list-projects", help="L0: list accessible LangSmith projects")
+    p.add_argument("--limit", type=int, default=50)
+    add_common_opts(p)
+    p.set_defaults(func=_cmd_list_projects)
 
     # fetch
     p = sub.add_parser("fetch", help="Download a trace, anonymize it, and build TER")

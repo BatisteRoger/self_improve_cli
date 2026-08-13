@@ -13,7 +13,16 @@ import os
 import time
 from typing import Any
 
-from self_improve_cli.domain import Message, Run, RunSummary, RunType, ToolCall, Trace
+from self_improve_cli.domain import (
+    Message,
+    ProjectSummary,
+    Run,
+    RunResolution,
+    RunSummary,
+    RunType,
+    ToolCall,
+    Trace,
+)
 from self_improve_cli.sources import (
     TraceSource,
     _input_messages,
@@ -266,17 +275,27 @@ class LangSmithSource(TraceSource):
         logger.info("Found %d %s runs in %.2fs", len(runs), run_type, time.monotonic() - start)
         return [_sdk_run_to_summary(r) for r in runs]
 
-    def fetch_trace(self, trace_id: str) -> Trace:
+    def fetch_trace(self, trace_id: str, project_id: str | None = None) -> Trace:
         """Download all runs of a trace and return a canonical Trace.
 
         Returns a Trace with sanitized=False. The caller is responsible for
         anonymizing before persistence.
+
+        When ``project_id`` is provided, it is used to scope the query instead
+        of the configured project name. This matters when the trace lives in a
+        different project than the default one (e.g. when resolving from a run
+        ID that belongs to another project).
         """
         client = self._get_client()
-        project = self._resolve_project()
-        logger.info("Fetching trace %s (project=%s)", trace_id, project)
+        if project_id:
+            logger.info("Fetching trace %s (project_id=%s)", trace_id, project_id)
+            query_kwargs: dict[str, Any] = {"project_id": project_id, "trace_id": trace_id}
+        else:
+            project = self._resolve_project()
+            logger.info("Fetching trace %s (project=%s)", trace_id, project)
+            query_kwargs = {"project_name": project, "trace_id": trace_id}
         start = time.monotonic()
-        sdk_runs = list(client.list_runs(project_name=project, trace_id=trace_id))
+        sdk_runs = list(client.list_runs(**query_kwargs))
         sdk_runs.sort(key=lambda r: r.dotted_order or "")
         logger.info(
             "Fetched %d runs for trace %s in %.2fs",
@@ -293,26 +312,49 @@ class LangSmithSource(TraceSource):
             source="langsmith",
         )
 
-    def resolve_trace_id(self, run_id: str) -> str:
-        """Resolve a run ID to its parent trace ID.
+    def resolve_trace_id(self, run_id: str) -> RunResolution:
+        """Resolve a run ID to its parent trace ID and project.
 
         Uses the LangSmith SDK's read_run to fetch the run metadata and
-        extract its trace_id. This is useful when the user only has a run ID
-        (e.g. from a LangSmith trace URL) and needs the trace ID to fetch
-        the full trace.
+        extract its trace_id and session_id (the project UUID). This is
+        useful when the user only has a run ID (e.g. from a LangSmith trace
+        URL) and needs the trace ID to fetch the full trace.
+
+        Returns a RunResolution with both the trace_id and the project_id
+        (session_id) so the caller can fetch the trace from the correct
+        project, even when it differs from the configured default.
         """
         client = self._get_client()
         logger.info("Resolving run %s to trace_id", run_id)
         start = time.monotonic()
         sdk_run = client.read_run(run_id)
         trace_id = str(sdk_run.trace_id)
+        project_id = getattr(sdk_run, "session_id", None)
+        project_id = str(project_id) if project_id else None
         logger.info(
-            "Resolved run %s -> trace_id %s in %.2fs",
+            "Resolved run %s -> trace_id %s (project_id=%s) in %.2fs",
             run_id,
             trace_id,
+            project_id,
             time.monotonic() - start,
         )
-        return trace_id
+        return RunResolution(trace_id=trace_id, project_id=project_id)
+
+    def list_projects(self, limit: int = 50) -> list[ProjectSummary]:
+        """List accessible LangSmith projects, most recent first."""
+        client = self._get_client()
+        logger.info("Listing projects (limit=%s)", limit)
+        start = time.monotonic()
+        projects = list(client.list_projects(limit=limit))
+        logger.info("Found %d projects in %.2fs", len(projects), time.monotonic() - start)
+        return [
+            ProjectSummary(
+                id=str(p.id),
+                name=p.name,
+                run_count=getattr(p, "run_count", None),
+            )
+            for p in projects
+        ]
 
     def pull_prompt(
         self, name: str, tag: str | None = None, workspace_id: str | None = None
