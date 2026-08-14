@@ -18,6 +18,7 @@ def make_run(
     input_messages: list[Message] | None = None,
     output_message: Message | None = None,
     error: str | None = None,
+    extra: dict | None = None,
 ) -> Run:
     """Build a canonical Run with sensible defaults for tests."""
     dotted = f"0001root.{idx}run-{idx}"
@@ -43,6 +44,7 @@ def make_run(
         outputs=outputs or {},
         input_messages=input_messages or [],
         output_message=output_message,
+        extra=extra or {},
     )
 
 

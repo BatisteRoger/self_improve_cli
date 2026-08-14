@@ -22,7 +22,14 @@ from dotenv import load_dotenv
 
 from self_improve_cli.cli.logging_setup import setup_logging
 from self_improve_cli.privacy import anonymize_trace, is_presidio_available
-from self_improve_cli.representations import build_narrative, build_skeleton, run_detail, write_ter
+from self_improve_cli.representations import (
+    build_narrative,
+    build_skeleton,
+    build_tools_detail,
+    build_tools_overview,
+    run_detail,
+    write_ter,
+)
 from self_improve_cli.storage import TraceStore
 
 # Force UTF-8 on stdout/stderr for cross-platform Unicode support.
@@ -279,6 +286,17 @@ def _cmd_run_detail(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _cmd_tools(args: argparse.Namespace) -> int:
+    store = _get_store(args)
+    trace = store.load_trace(args.trace_id)
+    if getattr(args, "detail", False):
+        content = build_tools_detail(trace.runs, tool_name=getattr(args, "tool_name", None))
+    else:
+        content = build_tools_overview(trace.runs)
+    _output(content, args)
+    return EXIT_OK
+
+
 def _cmd_info(args: argparse.Namespace) -> int:
     """Show info about a saved trace (sanitization status, stats)."""
     store = _get_store(args)
@@ -389,7 +407,17 @@ def _cmd_prompt_pull(args: argparse.Namespace) -> int:
 
     source = LangSmithSource()
     tag = args.tag or "latest"
-    content = source.pull_prompt(args.name, tag=args.tag, workspace_id=args.workspace)
+    try:
+        content = source.pull_prompt(args.name, tag=tag, workspace_id=args.workspace)
+    except Exception as e:
+        print(
+            f"Failed to pull prompt '{args.name}:{tag}'"
+            f"{' from workspace ' + args.workspace if args.workspace else ''}.\n"
+            f"Error: {e}\n"
+            f"Tip: try without --tag to pull the latest version.",
+            file=sys.stderr,
+        )
+        return EXIT_ERROR
     store = _get_store(args)
     path = store.save_prompt(args.name, tag, content)
     result = {
@@ -611,6 +639,26 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("run_id")
     add_common_opts(p)
     p.set_defaults(func=_cmd_run_detail)
+
+    # tools
+    p = sub.add_parser(
+        "tools",
+        help="L1: tools available per LLM run (matrix overview, or --detail for docstrings)",
+    )
+    p.add_argument("trace_id")
+    p.add_argument(
+        "--detail",
+        action="store_true",
+        help="Show full docstrings and parameter schemas instead of the matrix.",
+    )
+    p.add_argument(
+        "tool_name",
+        nargs="?",
+        default=None,
+        help="With --detail: show only this tool (omit for all tools).",
+    )
+    add_common_opts(p)
+    p.set_defaults(func=_cmd_tools)
 
     # info
     p = sub.add_parser("info", help="Show info about a saved trace")
