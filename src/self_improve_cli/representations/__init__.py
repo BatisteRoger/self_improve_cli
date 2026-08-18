@@ -468,9 +468,7 @@ def build_tools_overview(runs: list[Run]) -> str:
     col_width = max(len("tool"), max(len(c) for c in col_labels)) if col_labels else 4
 
     # Header row
-    header = f"{'tool':<{col_width}}  " + "  ".join(
-        f"{c:^{col_width}}" for c in col_labels
-    )
+    header = f"{'tool':<{col_width}}  " + "  ".join(f"{c:^{col_width}}" for c in col_labels)
     lines.append(header)
     lines.append("-" * len(header))
 

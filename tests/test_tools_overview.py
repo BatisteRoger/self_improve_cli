@@ -85,11 +85,15 @@ class TestBuildToolsDetail:
 
     def test_specific_tool_found_with_docstring(self):
         tools = [
-            _make_tool_def("rag_tool", "A RAG tool for documents.", {
-                "type": "object",
-                "properties": {"question": {"type": "string", "description": "The question"}},
-                "required": ["question"],
-            }),
+            _make_tool_def(
+                "rag_tool",
+                "A RAG tool for documents.",
+                {
+                    "type": "object",
+                    "properties": {"question": {"type": "string", "description": "The question"}},
+                    "required": ["question"],
+                },
+            ),
         ]
         runs = [make_root(), _llm_with_tools("1", tools)]
         result = build_tools_detail(runs, tool_name="rag_tool")
