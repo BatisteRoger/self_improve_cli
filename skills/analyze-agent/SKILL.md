@@ -141,26 +141,15 @@ values, evidence status levels, and discouraged terms.
 
 ## Weighing observations: the quality/cost/speed triangle
 
-Every observation should be weighed against three axes:
+Every observation should be weighed against the three axes of the
+improvement triangle: **quality**, **cost**, **speed**. These are in
+tension — context optimization can improve cost and speed while hurting
+quality, or while improving it.
 
-- **Quality** — did the agent succeed at its task?
-- **Cost** — how many tokens did it consume?
-- **Speed** — how long did it take?
-
-These are in tension. Context optimization (where tokens are spent vs
-saved) can improve cost and speed while hurting quality — or while
-improving it. The question is not "is this pattern bad" in the abstract,
-but "where are tokens being spent without contributing to quality, and
-where would spending more improve the outcome?"
-
-**Take a step back.** A local optimization (trimming a tool output,
-compacting history) might save tokens on one step but harm the
-conversation overall. Whether a local saving helped or harmed the whole
-task is a judgment that requires looking at the entire trace in context.
-The CLI surfaces the signals (context jumps, dead context, compaction
-events); the analyst decides whether the trade-off was worth it.
-
-See `AGENTS.md` — "The improvement triangle" — for the full framing.
+See [AGENTS.md — The improvement triangle](../../AGENTS.md) for the full
+framing. The key takeaway: take a step back before judging whether a
+local optimization helped or harmed the whole task. The CLI surfaces
+signals; the analyst decides whether the trade-off was worth it.
 
 ## Principles
 

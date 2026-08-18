@@ -76,7 +76,7 @@ Dependency direction: `source -> canonical model -> privacy/storage -> determini
 - `privacy/` — anonymization policy, recognizers, placeholder mapping, and sanitization reports.
 - `storage/` — safe local artifact layout, atomic writes, metadata, and raw-retention controls.
 - `representations/` — deterministic L0/L1/L2/L3 TER builders over canonical sanitized data.
-- `metrics/` — tool and context metrics, each labeled with its approximation and assumptions.
+- `metrics/` — tool, context, and skill metrics, each labeled with its approximation and assumptions.
 - `cli/` — command parsing, stable exit codes, stdout/stderr rules, Markdown/JSON output, and agent-oriented help.
 
 Keep the core representation and metrics layers free of network calls and LLM calls. This preserves recomputability and makes them easy to test.
@@ -113,6 +113,20 @@ workspace scoping does.
 
 For `prompt pull`, use `--workspace <UUID>` to pull from non-default LangSmith
 workspaces (e.g. Flows). The workspace ID is a LangSmith UUID, not a name.
+
+### Skill analysis commands
+
+When the target agent uses skills (loaded via `read_file` on `SKILL.md` files),
+these commands measure trigger accuracy and cost:
+
+- `skill-metrics <trace_id>` — detects skill invocations and estimates marginal token/latency cost.
+- `compare <trace_a> <trace_b>` — diffs two traces (tokens, latency, tool calls, skills). Useful for A/B testing skills on vs off.
+- `skill-check <trace_id> --expected <skill_name|none>` — scriptable trigger verification. Exit 0 = match, exit 1 = mismatch (false positive or wrong skill).
+
+Skill detection is heuristic: a tool call (`read_file` or `grep`) whose target
+path contains `SKILL.md` is counted as a skill invocation. Token cost is
+approximate — it assumes the skill is the only cause of context growth between
+two LLM steps. Cross-reference with `tool-metrics` and `context-metrics`.
 
 ## Security and open-source hygiene
 

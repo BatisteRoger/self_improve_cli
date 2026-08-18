@@ -8,14 +8,6 @@ description: Top-down workflow for analyzing AI-agent traces with self-improve C
 The recommended top-down workflow for analyzing a trace.
 Start cheap, drill down only when needed.
 
-## Quick start
-
-```bash
-self-improve init              # Create .env from .env.example (first time)
-self-improve list --limit 10   # L0: discover recent traces
-self-improve fetch <trace_id>  # Download, anonymize, and build all representations
-```
-
 ## Granularity levels
 
 ### L0 — Discovery
@@ -34,6 +26,7 @@ Use L0 to find interesting traces: errors, high token counts, long latencies.
 self-improve skeleton <trace_id>        # One line per significant run
 self-improve tool-metrics <trace_id>    # Tool call patterns and efficiency
 self-improve context-metrics <trace_id>  # Token decomposition and growth
+self-improve skill-metrics <trace_id>    # Skill invocations and token cost
 ```
 
 L1 gives you the shape of the trace without the content. Use it to decide
@@ -72,43 +65,21 @@ self-improve run-detail <trace_id> <run_id>
 Full untruncated context of a single run. Use this when L2 is insufficient
 and you need to see the exact prompts, outputs, or tool arguments of one run.
 
-### Info
+### Comparing traces
 
 ```bash
-self-improve info <trace_id>
+self-improve compare <trace_a> <trace_b>  # Diff tokens, latency, tool calls, skills
 ```
 
-Shows sanitization status, run count, and the sanitization report. Always
-check this after fetching to verify anonymization ran correctly.
-
-### Prompts
-
-```bash
-self-improve prompt pull <name> [--tag TAG]  # Download a prompt from LangSmith
-self-improve prompt list                     # List locally saved prompts
-self-improve prompt show <name> [--tag TAG]  # Show a saved prompt
-self-improve prompt diff <name> <trace_id>   # Compare prompt vs what trace used
-```
-
-Prompts are saved as local `.md` files under `data/prompts/`. The agent can
-edit them freely — they are local copies, not connected to LangSmith.
-
-### Target agent context
-
-```bash
-self-improve ati list          # List registered target agents
-self-improve ati show <name>   # Show an agent's architecture document
-```
-
-ATI documents are created by the `document-ati` skill and stored under
-`data/ati/<name>/architecture.md`.
+Useful for A/B testing: run the same query with two configurations (e.g.
+skills on vs off), fetch both traces, and compare.
 
 ## Workflow principles
 
 1. **Start at L0, drill down.** Don't jump to L3 without checking L1 first.
 2. **Read the skeleton before the narrative.** The skeleton tells you which
    runs matter; the narrative tells you what happened in them.
-3. **Use metrics to find signals, not conclusions.** Tool metrics and context
+3. **Use metrics to find signals, not conclusions.** Tool, context, and skill
    metrics are deterministic facts. Interpreting them is the analyst's job.
 4. **Check the sanitization report.** If `complete: false` or
    `recognizer_version: regex-fallback`, anonymization may be weaker than

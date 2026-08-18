@@ -161,10 +161,7 @@ def _cmd_list_projects(args: argparse.Namespace) -> int:
     if args.format == "json":
         print(
             json.dumps(
-                [
-                    {"id": p.id, "name": p.name, "run_count": p.run_count}
-                    for p in projects
-                ],
+                [{"id": p.id, "name": p.name, "run_count": p.run_count} for p in projects],
                 indent=2,
                 ensure_ascii=False,
             )
@@ -266,6 +263,130 @@ def _cmd_tool_metrics(args: argparse.Namespace) -> int:
     content = build_tool_metrics(trace.runs)
     _output(content, args)
     return EXIT_OK
+
+
+def _cmd_skill_metrics(args: argparse.Namespace) -> int:
+    from self_improve_cli.metrics.skill_metrics import build_skill_metrics
+
+    store = _get_store(args)
+    trace = store.load_trace(args.trace_id)
+    content = build_skill_metrics(trace.runs)
+    _output(content, args)
+    return EXIT_OK
+
+
+def _cmd_compare(args: argparse.Namespace) -> int:
+    """Compare two traces: tokens, latency, tool calls, and skill invocations."""
+    from self_improve_cli.metrics.skill_metrics import skill_invocations
+    from self_improve_cli.metrics.tool_metrics import tool_call_counts
+
+    store = _get_store(args)
+    trace_a = store.load_trace(args.trace_a)
+    trace_b = store.load_trace(args.trace_b)
+
+    from self_improve_cli.representations import significant_runs
+
+    sig_a = significant_runs(trace_a.runs)
+    sig_b = significant_runs(trace_b.runs)
+
+    def _total_tokens(sig: list) -> int:
+        return sum(r.total_tokens or 0 for r in sig if r.run_type.value == "llm")
+
+    def _llm_count(sig: list) -> int:
+        return sum(1 for r in sig if r.run_type.value == "llm")
+
+    def _latency_ms(sig: list) -> int | None:
+        if not sig or not sig[0].start_time:
+            return None
+        from datetime import datetime
+
+        try:
+            start = datetime.fromisoformat(sig[0].start_time.replace("Z", "+00:00"))
+            end_run = max(sig, key=lambda r: r.end_time or r.start_time or "")
+            if not end_run.end_time:
+                return None
+            end = datetime.fromisoformat(end_run.end_time.replace("Z", "+00:00"))
+            return int((end - start).total_seconds() * 1000)
+        except (ValueError, TypeError):
+            return None
+
+    tokens_a = _total_tokens(sig_a)
+    tokens_b = _total_tokens(sig_b)
+    llm_a = _llm_count(sig_a)
+    llm_b = _llm_count(sig_b)
+    latency_a = _latency_ms(sig_a)
+    latency_b = _latency_ms(sig_b)
+    tools_a = tool_call_counts(trace_a.runs)
+    tools_b = tool_call_counts(trace_b.runs)
+    skills_a = skill_invocations(trace_a.runs)
+    skills_b = skill_invocations(trace_b.runs)
+
+    skill_names_a = [s["skill_name"] for s in skills_a if s["skill_name"]]
+    skill_names_b = [s["skill_name"] for s in skills_b if s["skill_name"]]
+
+    if args.format == "json":
+        result = {
+            "trace_a": args.trace_a,
+            "trace_b": args.trace_b,
+            "token_delta": tokens_b - tokens_a,
+            "latency_delta_ms": (latency_b - latency_a) if latency_a and latency_b else None,
+            "llm_calls_a": llm_a,
+            "llm_calls_b": llm_b,
+            "tool_calls_a": tools_a,
+            "tool_calls_b": tools_b,
+            "skills_a": skill_names_a,
+            "skills_b": skill_names_b,
+        }
+        print(json.dumps(result, indent=2, default=str, ensure_ascii=False))
+    else:
+        lines = [
+            "# Trace comparison",
+            "",
+            f"| Metric | Trace A ({args.trace_a[:8]}) | Trace B ({args.trace_b[:8]}) | Delta |",
+            "| --- | ---: | ---: | ---: |",
+            f"| Total tokens | {tokens_a:,} | {tokens_b:,} | {tokens_b - tokens_a:+,} |",
+            f"| LLM calls | {llm_a} | {llm_b} | {llm_b - llm_a:+d} |",
+            f"| Latency | {latency_a}ms | {latency_b}ms | "
+            + (f"{(latency_b - latency_a):+d}ms" if latency_a and latency_b else "N/A")
+            + " |",
+            "",
+            "Skills triggered:",
+            f"- A: {', '.join(skill_names_a) or '(none)'}",
+            f"- B: {', '.join(skill_names_b) or '(none)'}",
+        ]
+        print("\n".join(lines))
+    return EXIT_OK
+
+
+def _cmd_skill_check(args: argparse.Namespace) -> int:
+    """Check if the expected skill was triggered in a trace."""
+    from self_improve_cli.metrics.skill_metrics import skill_invocations
+
+    store = _get_store(args)
+    trace = store.load_trace(args.trace_id)
+    invocations = skill_invocations(trace.runs)
+    observed = [s["skill_name"] for s in invocations if s["skill_name"]]
+    expected = args.expected
+
+    if expected == "none":
+        match = len(observed) == 0
+        observed_str = ", ".join(observed) if observed else "none"
+    else:
+        match = expected in observed
+        observed_str = ", ".join(observed) if observed else "none"
+
+    status = "✅" if match else "❌"
+    lines = [
+        f"Expected: {expected}",
+        f"Observed: {observed_str}  {status}",
+    ]
+    if not match and expected != "none" and observed:
+        lines.append(f"(false positive: {observed_str} triggered instead of {expected})")
+    elif not match and expected == "none":
+        lines.append("(false positive: skill triggered when none was expected)")
+
+    print("\n".join(lines))
+    return EXIT_OK if match else EXIT_ERROR
 
 
 def _cmd_context_metrics(args: argparse.Namespace) -> int:
@@ -632,6 +753,33 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("trace_id")
     add_common_opts(p)
     p.set_defaults(func=_cmd_context_metrics)
+
+    # skill-metrics
+    p = sub.add_parser("skill-metrics", help="L1: skill invocations & token cost")
+    p.add_argument("trace_id")
+    add_common_opts(p)
+    p.set_defaults(func=_cmd_skill_metrics)
+
+    # compare
+    p = sub.add_parser("compare", help="Compare two traces: tokens, latency, skills")
+    p.add_argument("trace_a")
+    p.add_argument("trace_b")
+    add_common_opts(p)
+    p.set_defaults(func=_cmd_compare)
+
+    # skill-check
+    p = sub.add_parser(
+        "skill-check",
+        help="Check if the expected skill was triggered (exit 0=match, 1=mismatch)",
+    )
+    p.add_argument("trace_id")
+    p.add_argument(
+        "--expected",
+        required=True,
+        help="Expected skill name, or 'none' for anti-trigger check",
+    )
+    add_common_opts(p)
+    p.set_defaults(func=_cmd_skill_check)
 
     # run-detail
     p = sub.add_parser("run-detail", help="L3: full prompts/outputs of one run")
