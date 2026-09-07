@@ -73,7 +73,7 @@ Dependency direction: `source -> canonical model -> privacy/storage -> determini
 
 - `domain/` — canonical trace, run, message, and artifact types; schema versioning and validation.
 - `sources/` — a `TraceSource` protocol plus the initial LangSmith adapter. SDK-specific objects stop at this boundary.
-- `privacy/` — anonymization policy, recognizers, placeholder mapping, and sanitization reports.
+- `privacy/` — anonymization policy, recognizers, placeholder mapping, and sanitization reports. Internally split into `patterns` (regex), `presidio_adapter` (NLP), `placeholders` (stable mapping), `report` (summary), and `redact` (recursive application + backend merge).
 - `storage/` — safe local artifact layout, atomic writes, metadata, and raw-retention controls.
 - `representations/` — deterministic L0/L1/L2/L3 TER builders over canonical sanitized data.
 - `metrics/` — tool, context, and skill metrics, each labeled with its approximation and assumptions.
@@ -95,6 +95,33 @@ self-improve fetch 019ff0e5-7189-713d-8ab9-c032edf9d4dd --from-run
 
 The resolution is logged to stderr, and the JSON output includes a
 `resolved_from_run` field so you can trace back which run ID was used.
+
+### Anonymizer backend
+
+The `fetch` command anonymizes traces before persistence. Two backends are
+available:
+
+| Backend | `recognizer_version` | When to use |
+|---------|---------------------|-------------|
+| `auto` (default) | `presidio+regex` or `regex-fallback` | General use — best available |
+| `presidio` | `presidio+regex` | Force Presidio; errors if unavailable |
+| `regex` | `regex-only` | Faster, no NLP models. Secrets fully detected; PII less comprehensive |
+
+Control via CLI flag or env var (CLI flag overrides env var):
+
+```bash
+self-improve fetch <trace_id> --anonymizer regex
+SELFIIMPROVE_ANONYMIZER=regex self-improve fetch <trace_id>
+```
+
+Secrets (API keys, JWTs, bearer tokens, private keys, connection strings,
+password assignments) are always detected by regex patterns regardless of
+backend. The backend only affects PII detection (email, phone, IBAN, credit
+card). Regex secret matches take priority over Presidio when they overlap.
+
+The `anonymizer_backend` field in fetch JSON output records which backend was
+used. The `sanitization_report.recognizer_version` field records which detector
+was active.
 
 ### Project and workspace configuration
 

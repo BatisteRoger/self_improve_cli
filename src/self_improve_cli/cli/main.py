@@ -21,7 +21,7 @@ from typing import Any
 from dotenv import load_dotenv
 
 from self_improve_cli.cli.logging_setup import setup_logging
-from self_improve_cli.privacy import anonymize_trace, is_presidio_available
+from self_improve_cli.privacy import AnonymizerBackend, anonymize_trace, is_presidio_available
 from self_improve_cli.representations import (
     build_narrative,
     build_skeleton,
@@ -43,6 +43,74 @@ EPILOG = (
     "Use --keep-raw to also retain a local raw copy (never shared)."
 )
 
+# Single source of truth for the .env template. Used by `self-improve init`
+# to generate a .env file. No separate .env.example file is shipped — this
+# constant is the only copy, avoiding sync issues between root and package files.
+ENV_TEMPLATE = """\
+# Copy this file to .env and fill in your values.
+# Never commit the real .env file.
+
+# --- LangSmith (optional, only needed for the `fetch` command) ---
+
+# LangSmith API key. Use a least-privileged key.
+#
+# This is the ONLY security control in this file. The API key's workspace
+# and project scoping on the LangSmith server side is what actually prevents
+# unauthorized access. Everything else below is convenience, not security.
+LANGSMITH_API_KEY=""
+
+# LangSmith API endpoint. Defaults to the US endpoint.
+# LANGSMITH_ENDPOINT="https://api.smith.langchain.com"
+
+# Default LangSmith project name for list/fetch commands.
+#
+# This is a CONVENIENCE DEFAULT, not a security control. It can be overridden
+# per-command with --project. You can leave it empty and always pass --project,
+# or set it to your most-used project to avoid typing it every time.
+LANGSMITH_PROJECT=""
+
+# --- Project allowlist (optional safety net, NOT a security control) ---
+#
+# Comma-separated list of allowed project names or glob patterns.
+# If empty/unset, all projects accessible to the API key are allowed.
+# If set, only projects matching at least one pattern can be queried.
+#
+# This is a convenience safety net to prevent typos (e.g. accidentally
+# typing "production" instead of "preprod"). It is NOT a security boundary -
+# anyone with access to this .env file can edit it or bypass it with --project.
+# Real access control is enforced by the API key's server-side scoping.
+#
+# Patterns use fnmatch syntax: * matches anything, ? matches one char.
+#
+# Examples:
+#   LANGSMITH_ALLOWED_PROJECTS="staging*,my-agent-dev,my-agent-test"
+#   LANGSMITH_ALLOWED_PROJECTS="my-agent-*"
+#   LANGSMITH_ALLOWED_PROJECTS=""  # all projects allowed (rely on API key)
+LANGSMITH_ALLOWED_PROJECTS=""
+
+# --- Prompt Hub access (safety feature) ---
+#
+# Whether to allow the `prompt pull` command to download prompts from
+# LangSmith Prompt Hub. Disabled by default - set to "true" to enable.
+#
+# This prevents an agent from reading potentially sensitive prompt logic
+# without explicit user consent.
+#
+# Use --workspace <UUID> to pull from non-default workspaces (e.g. Flows).
+ENABLE_PROMPT_HUB="false"
+
+# --- Anonymizer backend (performance vs. coverage trade-off) ---
+#
+# Which backend to use for PII/secrets detection during `fetch`.
+# Override per-command with --anonymizer.
+#
+#   auto      Use Presidio if installed, fall back to regex. Default.
+#   presidio  Force Presidio. Errors if not installed (falls back to regex).
+#   regex     Skip Presidio entirely. Faster, less comprehensive for PII.
+#             Secrets are still fully detected (regex patterns are always run).
+SELFIIMPROVE_ANONYMIZER="auto"
+"""
+
 # Exit codes
 EXIT_OK = 0
 EXIT_ERROR = 1
@@ -59,6 +127,20 @@ except Exception:  # noqa: BLE001
 def _load_env() -> None:
     """Load .env from cwd if it exists."""
     load_dotenv(Path(".env"))
+
+
+def _resolve_anonymizer(args: argparse.Namespace) -> AnonymizerBackend:
+    """Resolve the anonymizer backend: CLI flag overrides env var, env var overrides 'auto'.
+
+    Valid values: "auto", "presidio", "regex".
+    """
+    cli_val = getattr(args, "anonymizer", None)
+    if cli_val:
+        return cli_val  # type: ignore[return-value]
+    env_val = os.environ.get("SELFIIMPROVE_ANONYMIZER", "").strip().lower()
+    if env_val in ("auto", "presidio", "regex"):
+        return env_val  # type: ignore[return-value]
+    return "auto"
 
 
 def _get_store(args: argparse.Namespace) -> TraceStore:
@@ -216,7 +298,8 @@ def _cmd_fetch(args: argparse.Namespace) -> int:
         store.save_raw(trace)
 
     # Anonymize before persistence (privacy boundary).
-    trace, report = anonymize_trace(trace)
+    backend = _resolve_anonymizer(args)
+    trace, report = anonymize_trace(trace, backend=backend)
 
     sanitized_path = store.save_sanitized(trace)
 
@@ -227,6 +310,7 @@ def _cmd_fetch(args: argparse.Namespace) -> int:
         "runs": len(trace.runs),
         "sanitized": True,
         "sanitization_report": report.to_dict(),
+        "anonymizer_backend": backend,
         "presidio_available": is_presidio_available(),
         "sanitized_path": str(sanitized_path),
         "raw_saved": args.keep_raw,
@@ -495,19 +579,13 @@ def _cmd_skill(args: argparse.Namespace) -> int:
 
 
 def _cmd_init(args: argparse.Namespace) -> int:
-    """Create a .env file from .env.example if it doesn't exist."""
+    """Create a .env file from the built-in template if it doesn't exist."""
     env_path = Path(".env")
     if env_path.exists():
         print(".env already exists. Edit it to fill in your values.", file=sys.stderr)
         return EXIT_ERROR
-    from importlib.resources import files
-
-    example_path = Path(str(files("self_improve_cli"))) / ".env.example"
-    if not example_path.exists():
-        print(".env.example not found.", file=sys.stderr)
-        return EXIT_ERROR
-    env_path.write_text(example_path.read_text(encoding="utf-8"), encoding="utf-8")
-    print("Created .env from .env.example. Edit it to fill in your LangSmith API key.")
+    env_path.write_text(ENV_TEMPLATE, encoding="utf-8")
+    print("Created .env. Edit it to fill in your LangSmith API key.")
     return EXIT_OK
 
 
@@ -733,6 +811,14 @@ def build_parser() -> argparse.ArgumentParser:
         "parent trace ID before fetching. Useful when you only have a run ID "
         "(e.g. from a LangSmith trace URL).",
     )
+    p.add_argument(
+        "--anonymizer",
+        choices=["auto", "presidio", "regex"],
+        default=None,
+        help="Anonymization backend: 'auto' (presidio if installed, else regex), "
+        "'presidio' (force, errors if unavailable), 'regex' (skip presidio, faster). "
+        "Overrides SELFIIMPROVE_ANONYMIZER env var. Default: auto.",
+    )
     p.add_argument("trace_id")
     add_common_opts(p)
     p.set_defaults(func=_cmd_fetch)
@@ -832,7 +918,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=_cmd_skill)
 
     # init
-    p = sub.add_parser("init", help="Create a .env file from .env.example")
+    p = sub.add_parser("init", help="Create a .env file from the built-in template")
     p.set_defaults(func=_cmd_init)
 
     # doctor

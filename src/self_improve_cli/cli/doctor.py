@@ -40,7 +40,7 @@ from typing import Literal
 
 CheckStatus = Literal["pass", "warn", "fail", "skip"]
 
-# Placeholder values that indicate an unfilled .env (from .env.example).
+# Placeholder values that indicate an unfilled .env (from `self-improve init`).
 _PLACEHOLDER_VALUES = {""}
 
 # Requires-python from pyproject.toml — kept in sync manually.
@@ -217,7 +217,7 @@ def _check_env_api_key(profile: str) -> Check:
         status=status,
         summary="LANGSMITH_API_KEY is missing or empty",
         remedy="Set LANGSMITH_API_KEY in .env. Use a least-privileged key. "
-        "Run `self-improve init` to create .env from .env.example.",
+        "Run `self-improve init` to create a .env file.",
         profile=profile,
     )
 

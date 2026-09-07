@@ -56,7 +56,6 @@ packages = ["src/self_improve_cli"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "skills" = "self_improve_cli/skills"
-"src/self_improve_cli/.env.example" = "self_improve_cli/.env.example"
 "src/self_improve_cli/py.typed" = "self_improve_cli/py.typed"
 
 [tool.ruff]

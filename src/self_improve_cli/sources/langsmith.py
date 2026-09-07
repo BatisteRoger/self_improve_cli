@@ -66,7 +66,7 @@ def _get_client(workspace_id: str | None = None) -> Any:
     api_key = os.environ.get("LANGSMITH_API_KEY")
     if not api_key:
         raise RuntimeError(
-            "LANGSMITH_API_KEY is not set. Copy .env.example to .env and fill it in."
+            "LANGSMITH_API_KEY is not set. Run `self-improve init` to create a .env file."
         )
     endpoint = os.environ.get("LANGSMITH_ENDPOINT", "https://api.smith.langchain.com")
     logger.debug(
