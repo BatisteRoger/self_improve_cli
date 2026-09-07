@@ -128,6 +128,29 @@ path contains `SKILL.md` is counted as a skill invocation. Token cost is
 approximate — it assumes the skill is the only cause of context growth between
 two LLM steps. Cross-reference with `tool-metrics` and `context-metrics`.
 
+### Doctor: local setup diagnostic
+
+```bash
+self-improve doctor                    # default profile
+self-improve doctor --profile fetch    # escalate fetch prerequisites to fail
+self-improve doctor --format json      # machine-readable output
+```
+
+Read-only local setup diagnostic. No installs, no network, no mutations.
+A green report (exit 0) means the local environment is consistent enough to
+build, run, and test the CLI. Exit 1 = one or more failed checks.
+
+Profiles:
+
+- `default`: checks needed to run analysis commands (skeleton, narrative,
+  metrics) on already-fetched traces.
+- `fetch`: escalates `langsmith_extra` and `env_api_key` to `fail`, since the
+  `fetch` command cannot work without them.
+
+What is **not** checked: API key validity (would require a network call),
+dependency freshness (would require an install), artifact freshness, Docker,
+databases. See `cli/doctor.py` for the full check list and scope honesty notes.
+
 ## Security and open-source hygiene
 
 - Treat all trace content as sensitive. Do not commit raw traces, sanitized local data, credentials, customer content, or private source code.

@@ -511,6 +511,18 @@ def _cmd_init(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _cmd_doctor(args: argparse.Namespace) -> int:
+    """Run a read-only local setup diagnostic."""
+    from self_improve_cli.cli.doctor import format_report_markdown, run_doctor
+
+    report = run_doctor(profile=args.profile, offline=args.offline)
+    if args.format == "json":
+        print(json.dumps(report.to_dict(), indent=2, ensure_ascii=False))
+    else:
+        print(format_report_markdown(report))
+    return EXIT_OK if not report.has_failures else EXIT_ERROR
+
+
 # ---------------------------------------------------------------------------
 # Prompt commands
 # ---------------------------------------------------------------------------
@@ -822,6 +834,27 @@ def build_parser() -> argparse.ArgumentParser:
     # init
     p = sub.add_parser("init", help="Create a .env file from .env.example")
     p.set_defaults(func=_cmd_init)
+
+    # doctor
+    p = sub.add_parser(
+        "doctor",
+        help="Read-only local setup diagnostic (no installs, no network)",
+    )
+    p.add_argument(
+        "--profile",
+        choices=["default", "fetch"],
+        default="default",
+        help="Check profile: 'default' for analysis commands, 'fetch' escalates "
+        "langsmith_extra and env_api_key to fail (default: default)",
+    )
+    p.add_argument(
+        "--offline",
+        action="store_true",
+        help="Skip checks requiring Docker, databases, or network (no-op for this "
+        "project — all checks are already local-only)",
+    )
+    add_common_opts(p)
+    p.set_defaults(func=_cmd_doctor)
 
     # prompt
     p = sub.add_parser("prompt", help="Pull and manage LangSmith prompts (read-only)")

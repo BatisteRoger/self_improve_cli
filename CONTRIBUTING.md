@@ -22,6 +22,19 @@ uv sync --extra langsmith
 uv sync --all-extras
 ```
 
+After setup, verify your environment with the doctor:
+
+```bash
+# Default profile — checks for analysis commands
+uv run self-improve doctor
+
+# Fetch profile — also verifies fetch prerequisites (API key, langsmith extra)
+uv run self-improve doctor --profile fetch
+```
+
+A green report (exit 0) means the local setup is ready. The doctor is
+read-only: it never installs, starts services, or makes network calls.
+
 ## Running tests
 
 ```bash
