@@ -326,6 +326,6 @@ databases. See `cli/doctor.py` for the full check list and scope honesty notes.
 - Keep generated artifacts out of version control and make derived outputs reproducible.
 - Add or update tests for behavior changes, using synthetic data only.
 - Update user-facing documentation when the CLI contract changes.
-- Run the relevant formatter, linter, type checker, and tests before declaring a change complete.
+- Run the relevant formatter, linter, type checker, and tests before declaring a change complete. Specifically: `uv run pytest`, `uv run ruff check src tests`, `uv run ruff format --check src tests`, and `uv run pyright src`.
 - Keep changes focused and reviewable; do not rewrite unrelated files.
 - Label heuristic metrics as approximate in their output and docstrings.

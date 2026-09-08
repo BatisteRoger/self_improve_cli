@@ -51,13 +51,16 @@ uv run pytest tests/test_privacy.py
 # Lint
 uv run ruff check src tests
 
+# Format check (CI enforces this — run `uv run ruff format src tests` to fix)
+uv run ruff format --check src tests
+
 # Type check
 uv run pyright src
 ```
 
 ## Before submitting a change
 
-1. Run all tests, linter, and type checker.
+1. Run all tests, linter, format check, and type checker.
 2. Use only synthetic data in tests and fixtures. Never include real trace data, credentials, or personal identifiers.
 3. Update documentation if the CLI contract changes.
 4. Keep changes focused and reviewable.

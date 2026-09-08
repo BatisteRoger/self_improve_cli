@@ -59,8 +59,12 @@ Stop investigating when any of these is true:
    unverified.
 
 Do not force a full tour of every view when the question is already
-answered. Do not invent findings, alternative explanations, or extra
-tool calls to fill a template.
+answered. Do not invent findings, alternative explanations, or extra tool
+calls to fill a template.
+
+When you have your evidence, write a findings report using the format
+described in the `analyze-agent` skill (Finding, Evidence, Assessment,
+Likely locus, Suggested next action, Candidate improvement, Validation).
 
 ## Reference: the view ladder
 
