@@ -114,7 +114,7 @@ def significant_runs(runs: list[Run]) -> list[Run]:
     Dropped: middleware wrappers and other duplicating chain runs.
     """
     runs = sorted(runs, key=lambda r: r.dotted_order or "")
-    root_ids = {r.id for r in runs if not r.parent_run_id}
+    root_ids = {str(r.id) for r in runs if not r.parent_run_id}
 
     kept = []
     for run in runs:
@@ -122,7 +122,7 @@ def significant_runs(runs: list[Run]) -> list[Run]:
         if any(marker in name for marker in _NOISE_NAME_MARKERS):
             continue
         is_root = not run.parent_run_id
-        is_first_level = run.parent_run_id in root_ids
+        is_first_level = str(run.parent_run_id) in root_ids if run.parent_run_id else False
         if is_root or run.run_type in (RunType.LLM, RunType.TOOL) or is_first_level:
             kept.append(run)
 
@@ -362,6 +362,89 @@ def build_narrative(runs: list[Run], mode: str = "compact") -> str:
     return "\n".join(sections) + "\n"
 
 
+def narrative_data(runs: list[Run], mode: str = "compact") -> dict[str, Any]:
+    """Structured narrative for JSON output (composable contract).
+
+    Returns a dict with trace_id, root task, and a list of steps. Each step
+    is a dict with run metadata and either message deltas (LLM), args/result
+    (tool), or outputs (chain node).
+    """
+    sig = significant_runs(runs)
+    if not sig:
+        return {"trace_id": runs[0].trace_id if runs else "", "empty": True, "steps": []}
+
+    root = sig[0]
+    root_msgs = root.input_messages
+    task = "\n".join(f"[{m.role}] {m.text}" for m in root_msgs) or json.dumps(
+        root.inputs, default=str
+    )
+
+    steps_out: list[dict[str, Any]] = []
+    step = 0
+    previous_msgs: list[Message] = []
+    for run in sig[1:]:
+        if run.run_type == RunType.LLM:
+            step += 1
+            if mode == "full":
+                body, previous_msgs = _narrative_llm_step_full(run, previous_msgs)
+            else:
+                body, previous_msgs = _narrative_llm_step_compact(run, previous_msgs, step)
+            steps_out.append(
+                {
+                    "step": step,
+                    "type": "llm",
+                    "run_id": run.id,
+                    "name": run.name,
+                    "tokens": run.total_tokens,
+                    "latency_s": _latency_s(run),
+                    "status": run.status,
+                    "error": run.error,
+                    "body": body,
+                }
+            )
+        elif run.run_type == RunType.TOOL:
+            step += 1
+            args = json.dumps(run.inputs, default=str, ensure_ascii=False)
+            steps_out.append(
+                {
+                    "step": step,
+                    "type": "tool",
+                    "run_id": run.id,
+                    "name": run.name,
+                    "latency_s": _latency_s(run),
+                    "status": run.status,
+                    "error": run.error,
+                    "args": _truncate(args, _MAX_TOOL_CHARS),
+                    "result": _truncate(_tool_result_text(run), _MAX_TOOL_CHARS),
+                }
+            )
+        else:
+            step += 1
+            outputs = json.dumps(run.outputs, default=str, ensure_ascii=False)
+            steps_out.append(
+                {
+                    "step": step,
+                    "type": "node",
+                    "run_id": run.id,
+                    "name": run.name,
+                    "latency_s": _latency_s(run),
+                    "status": run.status,
+                    "error": run.error,
+                    "output": _truncate(outputs, _MAX_TOOL_CHARS),
+                }
+            )
+
+    return {
+        "trace_id": root.trace_id,
+        "root_status": root.status,
+        "root_total_tokens": root.total_tokens,
+        "root_latency_s": _latency_s(root),
+        "task": task,
+        "mode": mode,
+        "steps": steps_out,
+    }
+
+
 # ---------------------------------------------------------------------------
 # L3 — run detail
 # ---------------------------------------------------------------------------
@@ -530,12 +613,645 @@ def run_detail_data(runs: list[Run], run_id: str) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# L1 — tools overview & detail
+# L3 — context-at: what the model saw at step N (bounded, selective)
 # ---------------------------------------------------------------------------
 
-# Scope labels inferred from tool-set signatures. Keys are frozensets of tool
-# names; values are short human-readable labels. This is heuristic — the goal
-# is to help the analyst, not to be exhaustive.
+# Default per-message text preview length for the bounded view.
+_CONTEXT_AT_PREVIEW = 400
+
+
+def _main_loop_llm_runs_for_context(runs: list[Run]) -> list[Run]:
+    """Main-loop LLM runs, in chronological order.
+
+    Mirrors context_metrics._main_loop_llm_runs but lives in representations
+    so context-at does not depend on the metrics layer. Nested LLM runs
+    (children of tool runs) are excluded — they have their own context window.
+    """
+    sig = significant_runs(runs)
+    tool_ids = {r.id for r in sig if r.run_type == RunType.TOOL}
+    return [r for r in sig if r.run_type == RunType.LLM and r.parent_run_id not in tool_ids]
+
+
+def _msg_preview(msg: Message, limit: int = _CONTEXT_AT_PREVIEW) -> str:
+    """Bounded preview of a message: role + truncated text + tool calls."""
+    text = _truncate(msg.text, limit)
+    parts = [f"[{msg.role}] {text}"]
+    if msg.tool_calls:
+        for tc in msg.tool_calls:
+            args = json.dumps(tc.args, default=str, ensure_ascii=False)
+            parts.append(f"  -> tool_call {tc.name}({_truncate(args, _MAX_TOOL_CHARS)}) id={tc.id}")
+    if msg.tool_call_id:
+        parts.append(f"  (tool_call_id={msg.tool_call_id})")
+    return "\n".join(parts)
+
+
+def context_at(
+    runs: list[Run],
+    step: int,
+    *,
+    from_step: int | None = None,
+    to_step: int | None = None,
+    inputs_only: bool = False,
+    tool_call_id: str | None = None,
+    full: bool = False,
+) -> str:
+    """Bounded view of what the model saw at a given main-loop step.
+
+    Args:
+        runs: canonical Run objects.
+        step: 0-based index into the main-loop LLM runs.
+        from_step / to_step: if both given, show a diff of the message list
+            between from_step and to_step instead of a single step.
+        inputs_only: if True, show only input messages (no output).
+        tool_call_id: if given, show only the tool result message matching
+            this call id (and the preceding AI tool_call for context).
+        full: if True, do not truncate message text.
+
+    Raises ValueError if the step is out of range (recoverable: lists valid steps).
+    """
+    llm_runs = _main_loop_llm_runs_for_context(runs)
+    if not llm_runs:
+        return "# Context-at\n\n(no main-loop LLM runs in this trace)\n"
+
+    # Range mode: diff two steps.
+    if from_step is not None and to_step is not None:
+        return _context_at_diff(runs, llm_runs, from_step, to_step, full=full)
+
+    if step < 0 or step >= len(llm_runs):
+        valid = ", ".join(str(i) for i in range(len(llm_runs)))
+        raise ValueError(
+            f"Step {step} is out of range. Valid steps: 0..{len(llm_runs) - 1} ({valid})."
+        )
+
+    run = llm_runs[step]
+    lines = [
+        f"# Context-at step {step} — {run.name} (id={run.id})",
+        "",
+        f"status={run.status} tokens={run.total_tokens} "
+        f"latency={_latency_s(run)}s error={run.error}",
+        "",
+    ]
+
+    msgs = run.input_messages
+    if tool_call_id:
+        msgs = _filter_messages_by_tool_call_id(msgs, tool_call_id)
+        lines.append(f"## Filtered to tool_call_id={tool_call_id}")
+        lines.append("")
+        if not msgs:
+            lines.append(
+                f"No message with tool_call_id={tool_call_id} found at step {step}."
+            )
+            lines.append(
+                "Available tool_call_ids at this step: "
+                + ", ".join(_tool_call_ids_at_step(run))
+                or "(none)"
+            )
+            return "\n".join(lines) + "\n"
+
+    lines.append("## Input messages")
+    lines.append("")
+    if not msgs:
+        lines.append("(no input messages recorded for this run)")
+    else:
+        limit = _CONTEXT_AT_PREVIEW if not full else 10**9
+        for i, msg in enumerate(msgs):
+            lines.append(f"### [{i}] {_msg_preview(msg, limit=limit)}")
+            lines.append("")
+
+    if not inputs_only:
+        lines.append("## Output")
+        lines.append("")
+        out = run.output_message
+        if out:
+            limit = _CONTEXT_AT_PREVIEW if not full else 10**9
+            lines.append(_msg_preview(out, limit=limit))
+        else:
+            lines.append(json.dumps(run.outputs, indent=2, default=str, ensure_ascii=False))
+
+    lines.append("")
+    lines.append("## Navigation")
+    lines.append("")
+    if step > 0:
+        prev = llm_runs[step - 1]
+        lines.append(
+            f"Previous step {step - 1}: {prev.name} id={prev.id}  "
+            f"→ `self-improve context-at <trace_id> {step - 1}`"
+        )
+    if step < len(llm_runs) - 1:
+        nxt = llm_runs[step + 1]
+        lines.append(
+            f"Next step {step + 1}: {nxt.name} id={nxt.id}  "
+            f"→ `self-improve context-at <trace_id> {step + 1}`"
+        )
+    lines.append(
+        f"Full run detail  → `self-improve run-detail <trace_id> {run.id}`"
+    )
+    return "\n".join(lines) + "\n"
+
+
+def _tool_call_ids_at_step(run: Run) -> list[str]:
+    """All tool_call_ids referenced in a run's input messages."""
+    ids: list[str] = []
+    for msg in run.input_messages:
+        if msg.tool_call_id:
+            ids.append(msg.tool_call_id)
+        for tc in msg.tool_calls:
+            if tc.id:
+                ids.append(tc.id)
+    return ids
+
+
+def _filter_messages_by_tool_call_id(msgs: list[Message], tool_call_id: str) -> list[Message]:
+    """Keep the AI message that issued the tool_call and the matching tool result."""
+    kept: list[Message] = []
+    for msg in msgs:
+        if any(tc.id == tool_call_id for tc in msg.tool_calls):
+            kept.append(msg)
+        if msg.tool_call_id == tool_call_id:
+            kept.append(msg)
+    return kept
+
+
+def _context_at_diff(
+    runs: list[Run],
+    llm_runs: list[Run],
+    from_step: int,
+    to_step: int,
+    *,
+    full: bool = False,
+) -> str:
+    """Show what changed in the message list between two steps."""
+    for label, s in (("from_step", from_step), ("to_step", to_step)):
+        if s < 0 or s >= len(llm_runs):
+            raise ValueError(
+                f"{label}={s} is out of range. Valid steps: 0..{len(llm_runs) - 1}."
+            )
+
+    a = llm_runs[from_step]
+    b = llm_runs[to_step]
+    msgs_a = a.input_messages
+    msgs_b = b.input_messages
+
+    lines = [
+        f"# Context-at diff: step {from_step} → step {to_step}",
+        "",
+        f"Step {from_step}: {a.name} id={a.id} ({len(msgs_a)} messages)",
+        f"Step {to_step}:   {b.name} id={b.id} ({len(msgs_b)} messages)",
+        "",
+    ]
+
+    # Per-index comparison (same logic as narrative compact mode).
+    max_len = max(len(msgs_a), len(msgs_b))
+    added: list[int] = []
+    removed: list[int] = []
+    changed: list[int] = []
+    limit = _CONTEXT_AT_PREVIEW if not full else 10**9
+
+    for i in range(max_len):
+        ma = msgs_a[i] if i < len(msgs_a) else None
+        mb = msgs_b[i] if i < len(msgs_b) else None
+        if ma is None:
+            added.append(i)
+        elif mb is None:
+            removed.append(i)
+        elif _message_signature(ma) != _message_signature(mb):
+            changed.append(i)
+
+    if not (added or removed or changed):
+        lines.append("No differences: the message lists are identical.")
+        return "\n".join(lines) + "\n"
+
+    if changed:
+        lines.append("## Changed messages")
+        lines.append("")
+        for i in changed:
+            lines.append(f"### [{i}] changed")
+            lines.append(f"**Step {from_step}:**")
+            lines.append(_msg_preview(msgs_a[i], limit=limit))
+            lines.append("")
+            lines.append(f"**Step {to_step}:**")
+            lines.append(_msg_preview(msgs_b[i], limit=limit))
+            lines.append("")
+
+    if added:
+        lines.append(f"## Added in step {to_step} (not present at step {from_step})")
+        lines.append("")
+        for i in added:
+            lines.append(f"### [{i}] {_msg_preview(msgs_b[i], limit=limit)}")
+            lines.append("")
+
+    if removed:
+        lines.append(f"## Present at step {from_step}, gone at step {to_step}")
+        lines.append("")
+        for i in removed:
+            lines.append(f"### [{i}] {_msg_preview(msgs_a[i], limit=limit)}")
+            lines.append("")
+
+    # Honest note about inferred vs recorded.
+    if len(msgs_b) < len(msgs_a):
+        lines.append(
+            "Note: the message list shrank. This is consistent with compaction, "
+            "but the trace does not record compaction events explicitly — "
+            "this is an inferred change, not a recorded fact."
+        )
+    elif len(msgs_b) > len(msgs_a):
+        lines.append(
+            "Note: the message list grew. New messages were added between steps."
+        )
+
+    return "\n".join(lines) + "\n"
+
+
+def context_at_data(
+    runs: list[Run],
+    step: int,
+    *,
+    from_step: int | None = None,
+    to_step: int | None = None,
+    inputs_only: bool = False,
+    tool_call_id: str | None = None,
+    full: bool = False,
+) -> dict[str, Any]:
+    """Structured context-at for JSON output (composable contract).
+
+    Returns a dict with step metadata, message list (bounded or full), and
+    navigation references. Raises ValueError if the step is out of range.
+    """
+    llm_runs = _main_loop_llm_runs_for_context(runs)
+    if not llm_runs:
+        return {"trace_id": runs[0].trace_id if runs else "", "steps": 0, "messages": []}
+
+    if from_step is not None and to_step is not None:
+        return _context_at_diff_data(runs, llm_runs, from_step, to_step, full=full)
+
+    if step < 0 or step >= len(llm_runs):
+        raise ValueError(
+            f"Step {step} is out of range. Valid steps: 0..{len(llm_runs) - 1}."
+        )
+
+    run = llm_runs[step]
+    msgs = run.input_messages
+    if tool_call_id:
+        msgs = _filter_messages_by_tool_call_id(msgs, tool_call_id)
+
+    limit = _CONTEXT_AT_PREVIEW if not full else 10**9
+    messages_out: list[dict[str, Any]] = []
+    for i, msg in enumerate(msgs):
+        messages_out.append(
+            {
+                "index": i,
+                "role": msg.role,
+                "text": _truncate(msg.text, limit) if not full else msg.text,
+                "tool_calls": [
+                    {"name": tc.name, "args": tc.args, "id": tc.id}
+                    for tc in msg.tool_calls
+                ],
+                "tool_call_id": msg.tool_call_id,
+            }
+        )
+
+    result: dict[str, Any] = {
+        "trace_id": run.trace_id,
+        "step": step,
+        "total_steps": len(llm_runs),
+        "run_id": run.id,
+        "run_name": run.name,
+        "status": run.status,
+        "total_tokens": run.total_tokens,
+        "latency_s": _latency_s(run),
+        "error": run.error,
+        "messages": messages_out,
+        "filtered_to_tool_call_id": tool_call_id,
+    }
+
+    if not inputs_only:
+        out = run.output_message
+        if out:
+            result["output"] = {
+                "role": out.role,
+                "text": _truncate(out.text, limit) if not full else out.text,
+                "tool_calls": [
+                    {"name": tc.name, "args": tc.args, "id": tc.id}
+                    for tc in out.tool_calls
+                ],
+            }
+        else:
+            result["output"] = run.outputs
+
+    # Navigation references (connectedness).
+    nav: dict[str, Any] = {"run_detail_command": f"run-detail <trace_id> {run.id}"}
+    if step > 0:
+        prev = llm_runs[step - 1]
+        nav["previous"] = {"step": step - 1, "run_id": prev.id, "run_name": prev.name}
+    if step < len(llm_runs) - 1:
+        nxt = llm_runs[step + 1]
+        nav["next"] = {"step": step + 1, "run_id": nxt.id, "run_name": nxt.name}
+    result["navigation"] = nav
+    return result
+
+
+def _context_at_diff_data(
+    runs: list[Run],
+    llm_runs: list[Run],
+    from_step: int,
+    to_step: int,
+    *,
+    full: bool = False,
+) -> dict[str, Any]:
+    """Structured diff of message lists between two steps."""
+    for label, s in (("from_step", from_step), ("to_step", to_step)):
+        if s < 0 or s >= len(llm_runs):
+            raise ValueError(
+                f"{label}={s} is out of range. Valid steps: 0..{len(llm_runs) - 1}."
+            )
+
+    a = llm_runs[from_step]
+    b = llm_runs[to_step]
+    msgs_a = a.input_messages
+    msgs_b = b.input_messages
+    limit = _CONTEXT_AT_PREVIEW if not full else 10**9
+
+    changed: list[dict[str, Any]] = []
+    added: list[dict[str, Any]] = []
+    removed: list[dict[str, Any]] = []
+
+    max_len = max(len(msgs_a), len(msgs_b))
+    for i in range(max_len):
+        ma = msgs_a[i] if i < len(msgs_a) else None
+        mb = msgs_b[i] if i < len(msgs_b) else None
+        if ma is None:
+            added.append(_msg_to_dict(mb, i, limit))  # type: ignore[arg-type]
+        elif mb is None:
+            removed.append(_msg_to_dict(ma, i, limit))
+        elif _message_signature(ma) != _message_signature(mb):
+            changed.append(
+                {
+                    "index": i,
+                    "from": _msg_to_dict(ma, i, limit),
+                    "to": _msg_to_dict(mb, i, limit),
+                }
+            )
+
+    inferred_note = None
+    if len(msgs_b) < len(msgs_a):
+        inferred_note = (
+            "Message list shrank — consistent with compaction, but the trace "
+            "does not record compaction events explicitly. Inferred change."
+        )
+
+    return {
+        "trace_id": a.trace_id,
+        "from_step": from_step,
+        "to_step": to_step,
+        "from_run_id": a.id,
+        "to_run_id": b.id,
+        "from_message_count": len(msgs_a),
+        "to_message_count": len(msgs_b),
+        "changed": changed,
+        "added": added,
+        "removed": removed,
+        "inferred_note": inferred_note,
+    }
+
+
+def _msg_to_dict(msg: Message, index: int, limit: int) -> dict[str, Any]:
+    return {
+        "index": index,
+        "role": msg.role,
+        "text": _truncate(msg.text, limit),
+        "tool_calls": [
+            {"name": tc.name, "args": tc.args, "id": tc.id} for tc in msg.tool_calls
+        ],
+        "tool_call_id": msg.tool_call_id,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Navigation primitives: target-timeline + error-neighborhood (SLN-12)
+# ---------------------------------------------------------------------------
+
+
+def _run_matches_target(run: Run, target: str) -> bool:
+    """Does a run's inputs/outputs/name mention the target string?"""
+    if target in run.name:
+        return True
+    if target in json.dumps(run.inputs, default=str, ensure_ascii=False):
+        return True
+    if target in json.dumps(run.outputs, default=str, ensure_ascii=False):
+        return True
+    return False
+
+
+def target_timeline(runs: list[Run], target: str) -> str:
+    """Every significant step that touched a target, in chronological order.
+
+    A step "touches" the target if the target string appears in the run's
+    name, inputs, or outputs. This is a substring match — the analyst picks
+    the target (a file path, a key, a tool name).
+
+    Shows the outcome of each touch (status, error, truncated args/result).
+    Includes run IDs for drill-down via run-detail.
+    """
+    sig = significant_runs(runs)
+    if not sig:
+        return "# Target timeline\n\n(empty trace)\n"
+
+    matches = [r for r in sig if _run_matches_target(r, target)]
+    if not matches:
+        return (
+            f"# Target timeline — '{target}'\n\n"
+            f"No significant run touched '{target}' in this trace.\n"
+        )
+
+    lines = [
+        f"# Target timeline — '{target}'",
+        "",
+        f"{len(matches)} step(s) touched this target:",
+        "",
+    ]
+    for i, run in enumerate(matches):
+        outcome = run.status or "?"
+        if run.error:
+            outcome += f" error={_truncate(str(run.error), 200)}"
+        args = json.dumps(run.inputs, default=str, ensure_ascii=False)
+        result = (
+            _tool_result_text(run)
+            if run.run_type == RunType.TOOL
+            else json.dumps(run.outputs, default=str, ensure_ascii=False)
+        )
+        lines.append(f"{i + 1}. [{run.run_type.value}] {run.name} id={run.id} — {outcome}")
+        lines.append(f"   args: {_truncate(args, _MAX_TOOL_CHARS)}")
+        lines.append(f"   result: {_truncate(result, _MAX_TOOL_CHARS)}")
+        lines.append(f"   → `self-improve run-detail <trace_id> {run.id}`")
+        lines.append("")
+
+    return "\n".join(lines) + "\n"
+
+
+def target_timeline_data(runs: list[Run], target: str) -> dict[str, Any]:
+    """Structured target timeline for JSON output (composable contract)."""
+    sig = significant_runs(runs)
+    if not sig:
+        return {"trace_id": runs[0].trace_id if runs else "", "target": target, "touches": []}
+
+    matches = [r for r in sig if _run_matches_target(r, target)]
+    return {
+        "trace_id": sig[0].trace_id if sig else "",
+        "target": target,
+        "touch_count": len(matches),
+        "touches": [
+            {
+                "index": i,
+                "run_id": r.id,
+                "run_type": r.run_type.value,
+                "name": r.name,
+                "status": r.status,
+                "error": _truncate(str(r.error), 200) if r.error else None,
+                "args": _truncate(
+                    json.dumps(r.inputs, default=str, ensure_ascii=False), _MAX_TOOL_CHARS
+                ),
+                "result": _truncate(
+                    _tool_result_text(r)
+                    if r.run_type == RunType.TOOL
+                    else json.dumps(r.outputs, default=str, ensure_ascii=False),
+                    _MAX_TOOL_CHARS,
+                ),
+            }
+            for i, r in enumerate(matches)
+        ],
+    }
+
+
+def _is_infra_cancelled(error: str | None) -> bool:
+    """Check if an error is an infra-cancelled (not an agent failure)."""
+    if not error:
+        return False
+    return any(marker in error for marker in _INFRA_ERROR_MARKERS)
+
+
+def error_neighborhood(runs: list[Run], *, window: int = 1) -> str:
+    """Steps around each error, with the agent's reaction.
+
+    For each run with an error, shows the run itself plus ``window`` significant
+    runs before and after it. This helps verify whether the agent recovered,
+    retried, or ignored the error.
+
+    Args:
+        runs: canonical Run objects.
+        window: number of significant runs to show before and after each error.
+    """
+    sig = significant_runs(runs)
+    if not sig:
+        return "# Error neighborhood\n\n(empty trace)\n"
+
+    error_indices = [
+        i for i, r in enumerate(sig) if r.error and not _is_infra_cancelled(r.error)
+    ]
+    if not error_indices:
+        return "# Error neighborhood\n\nNo agent errors in this trace.\n"
+
+    lines = [
+        "# Error neighborhood",
+        "",
+        f"{len(error_indices)} error(s) found. Showing {window} step(s) before and after each.",
+        "",
+    ]
+    for ei in error_indices:
+        start = max(0, ei - window)
+        end = min(len(sig), ei + window + 1)
+        err_run = sig[ei]
+        lines.append(f"## Error at step {ei} — {err_run.name} id={err_run.id}")
+        lines.append("")
+        lines.append(f"**Error:** {_truncate(str(err_run.error), 500)}")
+        lines.append("")
+        lines.append("### Neighborhood")
+        lines.append("")
+        for j in range(start, end):
+            r = sig[j]
+            marker = " **[ERROR]**" if j == ei else ""
+            outcome = r.status or "?"
+            lines.append(
+                f"- step {j} [{r.run_type.value}] {r.name} id={r.id} — {outcome}{marker}"
+            )
+            if r.error and j != ei:
+                lines.append(f"  also errored: {_truncate(str(r.error), 200)}")
+        lines.append("")
+        # Reaction: what did the next significant run do?
+        if ei + 1 < len(sig):
+            nxt = sig[ei + 1]
+            lines.append("### Agent reaction (next significant step)")
+            lines.append("")
+            lines.append(
+                f"Next: [{nxt.run_type.value}] {nxt.name} id={nxt.id} — {nxt.status or '?'}"
+            )
+            lines.append(f"→ `self-improve run-detail <trace_id> {nxt.id}`")
+        else:
+            lines.append("### Agent reaction")
+            lines.append("")
+            lines.append("(no further significant steps — the error was the last action)")
+        lines.append("")
+
+    return "\n".join(lines) + "\n"
+
+
+def error_neighborhood_data(runs: list[Run], *, window: int = 1) -> dict[str, Any]:
+    """Structured error neighborhood for JSON output (composable contract)."""
+    sig = significant_runs(runs)
+    if not sig:
+        return {"trace_id": runs[0].trace_id if runs else "", "errors": []}
+
+    error_indices = [
+        i for i, r in enumerate(sig) if r.error and not _is_infra_cancelled(r.error)
+    ]
+    errors_out: list[dict[str, Any]] = []
+    for ei in error_indices:
+        start = max(0, ei - window)
+        end = min(len(sig), ei + window + 1)
+        neighborhood: list[dict[str, Any]] = []
+        for j in range(start, end):
+            r = sig[j]
+            neighborhood.append(
+                {
+                    "step": j,
+                    "run_id": r.id,
+                    "run_type": r.run_type.value,
+                    "name": r.name,
+                    "status": r.status,
+                    "error": _truncate(str(r.error), 500) if r.error else None,
+                    "is_the_error": j == ei,
+                }
+            )
+        reaction = None
+        if ei + 1 < len(sig):
+            nxt = sig[ei + 1]
+            reaction = {
+                "step": ei + 1,
+                "run_id": nxt.id,
+                "run_type": nxt.run_type.value,
+                "name": nxt.name,
+                "status": nxt.status,
+            }
+        errors_out.append(
+            {
+                "error_step": ei,
+                "run_id": sig[ei].id,
+                "error": _truncate(str(sig[ei].error), 500),
+                "neighborhood": neighborhood,
+                "agent_reaction": reaction,
+            }
+        )
+
+    return {
+        "trace_id": sig[0].trace_id,
+        "error_count": len(error_indices),
+        "window": window,
+        "errors": errors_out,
+    }
+
+
+# ---------------------------------------------------------------------------
+# L1 — tools overview & detail
+# ---------------------------------------------------------------------------
 _SCOPE_LABELS: dict[frozenset[str], str] = {
     frozenset(): "guardrails (no tools)",
 }

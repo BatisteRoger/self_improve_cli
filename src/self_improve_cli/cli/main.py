@@ -27,7 +27,13 @@ from self_improve_cli.representations import (
     build_skeleton,
     build_tools_detail,
     build_tools_overview,
+    context_at,
+    context_at_data,
+    error_neighborhood,
+    error_neighborhood_data,
     run_detail,
+    target_timeline,
+    target_timeline_data,
     write_ter,
 )
 from self_improve_cli.storage import TraceStore
@@ -339,28 +345,39 @@ def _cmd_narrative(args: argparse.Namespace) -> int:
     store = _get_store(args)
     trace = store.load_trace(args.trace_id)
     mode = "full" if getattr(args, "full", False) else "compact"
-    content = build_narrative(trace.runs, mode=mode)
-    _output(content, args)
+    if args.format == "json":
+        from self_improve_cli.representations import narrative_data
+
+        _output(narrative_data(trace.runs, mode=mode), args)
+    else:
+        content = build_narrative(trace.runs, mode=mode)
+        _output(content, args)
     return EXIT_OK
 
 
 def _cmd_tool_metrics(args: argparse.Namespace) -> int:
-    from self_improve_cli.metrics.tool_metrics import build_tool_metrics
+    from self_improve_cli.metrics.tool_metrics import build_tool_metrics, tool_metrics_data
 
     store = _get_store(args)
     trace = store.load_trace(args.trace_id)
-    content = build_tool_metrics(trace.runs)
-    _output(content, args)
+    if args.format == "json":
+        _output(tool_metrics_data(trace.runs), args)
+    else:
+        content = build_tool_metrics(trace.runs)
+        _output(content, args)
     return EXIT_OK
 
 
 def _cmd_skill_metrics(args: argparse.Namespace) -> int:
-    from self_improve_cli.metrics.skill_metrics import build_skill_metrics
+    from self_improve_cli.metrics.skill_metrics import build_skill_metrics, skill_metrics_data
 
     store = _get_store(args)
     trace = store.load_trace(args.trace_id)
-    content = build_skill_metrics(trace.runs)
-    _output(content, args)
+    if args.format == "json":
+        _output(skill_metrics_data(trace.runs), args)
+    else:
+        content = build_skill_metrics(trace.runs)
+        _output(content, args)
     return EXIT_OK
 
 
@@ -479,12 +496,15 @@ def _cmd_skill_check(args: argparse.Namespace) -> int:
 
 
 def _cmd_context_metrics(args: argparse.Namespace) -> int:
-    from self_improve_cli.metrics.context_metrics import build_context_metrics
+    from self_improve_cli.metrics.context_metrics import build_context_metrics, context_metrics_data
 
     store = _get_store(args)
     trace = store.load_trace(args.trace_id)
-    content = build_context_metrics(trace.runs)
-    _output(content, args)
+    if args.format == "json":
+        _output(context_metrics_data(trace.runs), args)
+    else:
+        content = build_context_metrics(trace.runs)
+        _output(content, args)
     return EXIT_OK
 
 
@@ -498,6 +518,64 @@ def _cmd_run_detail(args: argparse.Namespace) -> int:
     else:
         content = run_detail(trace.runs, args.run_id)
         _output(content, args)
+    return EXIT_OK
+
+
+def _cmd_context_at(args: argparse.Namespace) -> int:
+    """Show what the model saw at a given main-loop step (bounded, selective)."""
+    store = _get_store(args)
+    trace = store.load_trace(args.trace_id)
+    from_step = getattr(args, "from_step", None)
+    to_step = getattr(args, "to_step", None)
+    tool_call_id = getattr(args, "tool_call_id", None)
+    inputs_only = getattr(args, "inputs_only", False)
+    full = getattr(args, "full", False)
+
+    if args.format == "json":
+        data = context_at_data(
+            trace.runs,
+            args.step,
+            from_step=from_step,
+            to_step=to_step,
+            inputs_only=inputs_only,
+            tool_call_id=tool_call_id,
+            full=full,
+        )
+        _output(data, args)
+    else:
+        content = context_at(
+            trace.runs,
+            args.step,
+            from_step=from_step,
+            to_step=to_step,
+            inputs_only=inputs_only,
+            tool_call_id=tool_call_id,
+            full=full,
+        )
+        _output(content, args)
+    return EXIT_OK
+
+
+def _cmd_target_timeline(args: argparse.Namespace) -> int:
+    """Every step that touched a given target (file/path/key), in order."""
+    store = _get_store(args)
+    trace = store.load_trace(args.trace_id)
+    if args.format == "json":
+        _output(target_timeline_data(trace.runs, args.target), args)
+    else:
+        _output(target_timeline(trace.runs, args.target), args)
+    return EXIT_OK
+
+
+def _cmd_error_neighborhood(args: argparse.Namespace) -> int:
+    """Steps around each error, with the agent's reaction."""
+    store = _get_store(args)
+    trace = store.load_trace(args.trace_id)
+    window = getattr(args, "window", 1)
+    if args.format == "json":
+        _output(error_neighborhood_data(trace.runs, window=window), args)
+    else:
+        _output(error_neighborhood(trace.runs, window=window), args)
     return EXIT_OK
 
 
@@ -895,6 +973,71 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("run_id")
     add_common_opts(p)
     p.set_defaults(func=_cmd_run_detail)
+
+    # context-at
+    p = sub.add_parser(
+        "context-at",
+        help="L3: what the model saw at step N (bounded, selective)",
+    )
+    p.add_argument("trace_id")
+    p.add_argument("step", type=int, help="0-based main-loop LLM step index")
+    p.add_argument(
+        "--from",
+        dest="from_step",
+        type=int,
+        default=None,
+        help="Diff mode: starting step (requires --to)",
+    )
+    p.add_argument(
+        "--to",
+        dest="to_step",
+        type=int,
+        default=None,
+        help="Diff mode: ending step (requires --from)",
+    )
+    p.add_argument(
+        "--inputs-only",
+        action="store_true",
+        help="Show only input messages (no output)",
+    )
+    p.add_argument(
+        "--tool",
+        dest="tool_call_id",
+        default=None,
+        help="Show only the tool result matching this tool_call_id",
+    )
+    p.add_argument(
+        "--full",
+        action="store_true",
+        help="Do not truncate message text (default: bounded preview)",
+    )
+    add_common_opts(p)
+    p.set_defaults(func=_cmd_context_at)
+
+    # target-timeline
+    p = sub.add_parser(
+        "target-timeline",
+        help="Navigation: every step that touched a target (file/path/key)",
+    )
+    p.add_argument("trace_id")
+    p.add_argument("target", help="Target string (file path, key, tool name)")
+    add_common_opts(p)
+    p.set_defaults(func=_cmd_target_timeline)
+
+    # error-neighborhood
+    p = sub.add_parser(
+        "error-neighborhood",
+        help="Navigation: steps around each error, with the agent's reaction",
+    )
+    p.add_argument("trace_id")
+    p.add_argument(
+        "--window",
+        type=int,
+        default=1,
+        help="Number of steps to show before and after each error (default: 1)",
+    )
+    add_common_opts(p)
+    p.set_defaults(func=_cmd_error_neighborhood)
 
     # tools
     p = sub.add_parser(

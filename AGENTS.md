@@ -121,6 +121,54 @@ governs both.
    parse prose to recover identifiers already known to the CLI. Useful next
    actions should be grounded in available data — not generated diagnoses.
 
+### Command audit (as of Wave 1)
+
+| Command | Predictable | Bounded | Connected | Honest | Recoverable | Composable (JSON) |
+|---------|:-:|:-:|:-:|:-:|:-:|:-:|
+| `skeleton` | ✓ | ✓ | run IDs | ✓ | ✓ | ✓ structured |
+| `narrative` | ✓ | ✓ truncation markers | run IDs per step | ✓ | n/a | ✓ structured |
+| `run-detail` | ✓ | ✓ | parent/child refs | ✓ | ✓ suggests skeleton | ✓ structured |
+| `context-at` | ✓ step index | ✓ bounded preview | prev/next step, run-detail | ✓ inferred labels | ✓ lists valid steps | ✓ structured |
+| `target-timeline` | ✓ | ✓ truncation markers | run IDs per touch | ✓ | ✓ reports no matches | ✓ structured |
+| `error-neighborhood` | ✓ | ✓ window-bounded | run IDs, next step | ✓ excludes infra-cancelled | n/a | ✓ structured |
+| `tool-metrics` | ✓ | ✓ | n/a (aggregate) | ✓ approximate labels | n/a | ✓ structured |
+| `context-metrics` | ✓ | ✓ | step indices | ✓ approximate labels | n/a | ✓ structured |
+| `skill-metrics` | ✓ | ✓ | step indices | ✓ approximate labels | n/a | ✓ structured |
+| `compare` | ✓ | ✓ | trace IDs | ✓ | n/a | markdown-wrapped |
+| `info` | ✓ | ✓ | n/a | ✓ | ✓ | ✓ structured |
+
+Gaps (deferred or low-impact):
+- `compare` still returns markdown-wrapped JSON. Low priority — it's a
+  two-trace aggregate, not a drill-down target.
+- `tools` (overview/detail) still returns markdown-wrapped JSON. Low
+  priority — the matrix is inherently tabular.
+
+### Merge checklist for new commands
+
+Before merging a new analysis command, verify:
+
+- [ ] **Predictable**: the command name describes the question it answers;
+  selectors (trace_id, run_id, step) use the same conventions as existing
+  commands.
+- [ ] **Bounded**: default output is compact; expansion is opt-in (`--full`,
+  `--from/--to`, `--tool`); truncation uses the shared `_truncate()` marker
+  `…[truncated, N chars total]`.
+- [ ] **Connected**: output exposes stable run IDs and references to related
+  views (parent/child, prev/next step, or the originating tool call).
+- [ ] **Honest**: approximate metrics are labeled "APPROXIMATE"; inferred
+  relationships are labeled "inferred"; unavailable evidence is stated
+  explicitly, not silently omitted.
+- [ ] **Recoverable**: invalid selectors produce a precise error and a valid
+  next command (e.g. "run `self-improve skeleton <trace_id>` for valid IDs").
+- [ ] **Composable**: `--format json` returns a structured dict (not
+  `{"content": "<markdown>"}`) when programmatic selection is useful; add a
+  `*_data()` function in the representation/metrics layer and wire the CLI
+  to use it.
+- [ ] **Tests**: focused tests for the new behavior (markdown + json paths,
+  error recovery, empty-trace edge case).
+- [ ] **Docs**: AGENTS.md command audit table updated; skill files updated if
+  the command changes the navigation workflow.
+
 ## CLI usage details
 
 ### Fetching from a run ID

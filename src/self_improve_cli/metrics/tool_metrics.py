@@ -290,3 +290,41 @@ def build_tool_metrics(runs: list[Run]) -> str:
         sections.append("")
 
     return "\n".join(sections) + "\n"
+
+
+def tool_metrics_data(runs: list[Run]) -> dict[str, Any]:
+    """Structured tool metrics for JSON output (composable contract).
+
+    Returns a dict with trace_id and the same sections as build_tool_metrics,
+    but as structured data instead of prose.
+    """
+    sig = significant_runs(runs)
+    if not sig:
+        return {"trace_id": runs[0].trace_id if runs else "", "empty": True}
+
+    trace_id = sig[0].trace_id
+    counts = dict(Counter(r.name for r in _tool_runs(sig)))
+    repeated = repeated_same_target(runs, _REPEAT_THRESHOLD)
+    gran = modify_granularity(runs)
+    attrib = token_cost_attribution(runs)
+
+    return {
+        "trace_id": trace_id,
+        "call_frequency": counts,
+        "repeated_same_target": {
+            name: [{"target": t, "count": c} for t, c in targets]
+            for name, targets in repeated.items()
+        },
+        "modify_granularity": gran if gran["total_modify_calls"] > 0 else None,
+        "token_cost_attribution": attrib if attrib else None,
+        "notes": {
+            "repeated_calls": (
+                "Repeated calls may be legitimate (e.g. the target changed "
+                "between calls). Investigate whether the target changed before "
+                "concluding redundancy."
+            ),
+            "token_attribution": (
+                "Approximate — assumes the tool is the only cause of context growth."
+            ),
+        },
+    }

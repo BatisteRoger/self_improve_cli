@@ -177,13 +177,15 @@ def _sdk_run_to_canonical(sdk_run: Any) -> Run:
             tool_call_id=output_msg_raw["tool_call_id"],
         )
 
+    _pid = run_dict.get("parent_run_id")
+    _dotted = run_dict.get("dotted_order")
     return Run(
         id=str(run_dict.get("id", "")),
         trace_id=str(run_dict.get("trace_id", "")),
         run_type=_parse_run_type(run_dict.get("run_type")),
         name=run_dict.get("name", ""),
-        parent_run_id=run_dict.get("parent_run_id"),
-        dotted_order=run_dict.get("dotted_order"),
+        parent_run_id=str(_pid) if _pid is not None else None,
+        dotted_order=str(_dotted) if _dotted is not None else None,
         status=run_dict.get("status"),
         start_time=str(run_dict.get("start_time")) if run_dict.get("start_time") else None,
         end_time=str(run_dict.get("end_time")) if run_dict.get("end_time") else None,

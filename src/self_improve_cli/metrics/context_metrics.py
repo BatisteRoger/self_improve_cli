@@ -300,3 +300,48 @@ def build_context_metrics(runs: list[Run]) -> str:
         sections.append("")
 
     return "\n".join(sections) + "\n"
+
+
+def context_metrics_data(runs: list[Run]) -> dict[str, Any]:
+    """Structured context metrics for JSON output (composable contract).
+
+    Returns a dict with trace_id, token decomposition per step, stale ratios,
+    and the growth curve — the same data as build_context_metrics, structured.
+    """
+    sig = significant_runs(runs)
+    if not sig:
+        return {"trace_id": runs[0].trace_id if runs else "", "empty": True}
+
+    trace_id = sig[0].trace_id
+    llm_runs = _main_loop_llm_runs(sig)
+    decomps = [_token_decomposition(r) for r in llm_runs]
+    stale_ratios = _stale_tool_result_ratio(sig)
+    curve = _growth_curve(sig)
+
+    steps: list[dict[str, Any]] = []
+    for i, (decomp, stale) in enumerate(zip(decomps, stale_ratios)):
+        steps.append(
+            {
+                "step": i,
+                "prompt_tokens": decomp["prompt_tokens"],
+                "categories": decomp["categories"],
+                "per_tool": decomp["per_tool"],
+                "overhead": decomp["overhead"],
+                "stale_tool_result_ratio": stale,
+            }
+        )
+
+    return {
+        "trace_id": trace_id,
+        "token_decomposition": steps,
+        "growth_curve": curve,
+        "notes": {
+            "token_categories": "chars/4 estimates (APPROXIMATE)",
+            "overhead": "Residual vs real prompt_tokens (tool schemas + estimation error)",
+            "stale_ratio": (
+                f"% of tool results older than the {_STALE_TOOL_RESULT_K} most recent. "
+                "Measures age, not usefulness."
+            ),
+            "growth_curve": "Nested-LLM runs (tools spawning their own LLM) are excluded.",
+        },
+    }

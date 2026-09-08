@@ -297,3 +297,26 @@ def build_skill_metrics(runs: list[Run]) -> str:
         sections.append("")
 
     return "\n".join(sections) + "\n"
+
+
+def skill_metrics_data(runs: list[Run]) -> dict[str, Any]:
+    """Structured skill metrics for JSON output (composable contract)."""
+    sig = significant_runs(runs)
+    if not sig:
+        return {"trace_id": runs[0].trace_id if runs else "", "empty": True}
+
+    trace_id = sig[0].trace_id
+    invocations = skill_invocations(runs)
+    costs = skill_token_cost(runs)
+
+    return {
+        "trace_id": trace_id,
+        "invocations": invocations,
+        "token_costs": costs,
+        "notes": {
+            "token_cost": (
+                "Token deltas assume the skill is the only cause of context "
+                "growth between LLM steps. Cross-reference with tool_metrics."
+            ),
+        },
+    }
