@@ -88,6 +88,38 @@ skills on vs off), fetch both traces, and compare.
    smaller than raw). Don't dump raw traces into an agent's context when the
    narrative or skeleton will do.
 
+## Question-driven navigation
+
+The top-down L0 → L1 → L2 → L3 workflow above is a default for unfamiliar or
+broad investigations. If you already have a precise question, start with the
+cheapest view that can answer it:
+
+| Question | Start with | Why |
+|----------|-----------|-----|
+| "Why did it read this file 4 times?" | `tool-metrics` → `run-detail` | Repeated-call signal first, then inspect the specific calls |
+| "Did compaction remove the user's constraint?" | `context-metrics` → `run-detail` on the LLM steps before/after | Look for a context drop, then compare inputs |
+| "What supports its final claim?" | `narrative` → `run-detail` on the last LLM run | Find the claim, trace back to evidence |
+| "Where did this become expensive?" | `context-metrics` → `tool-metrics` | Growth curve and token attribution |
+| "Did the model receive the tool error?" | `run-detail` on the tool run → `run-detail` on the next LLM run | Check if the error is in the model's input messages |
+| "Is this trace clean?" | `skeleton` → `tool-metrics` → `context-metrics` | Quick scan for errors, redundancy, and anomalies |
+
+## Stopping rules
+
+Stop investigating when any of these is true:
+
+1. **The question is answered.** You have evidence-backed findings with
+   citations to specific run IDs.
+2. **Evidence is unavailable.** The trace does not contain the information
+   needed (e.g. compaction removed the context, or the run was not recorded).
+   State this explicitly — "evidence unavailable" is a valid conclusion.
+3. **Further inspection won't change the conclusion.** You've checked the
+   plausible alternatives and they don't hold. Don't keep digging for
+   completeness.
+4. **Budget is exhausted.** If you've hit your token or time budget, summarize
+   what you found and what remains unverified.
+
+Do not force a full L0–L3 tour when the question is already answered.
+
 ## Privacy
 
 - Traces are anonymized on fetch by default.

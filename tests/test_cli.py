@@ -139,6 +139,46 @@ def test_run_detail_command(saved_trace, capsys):
     assert "You are a helpful agent." in out
 
 
+def test_skeleton_json_is_structured(saved_trace, capsys):
+    """skeleton --format json returns structured data, not markdown wrapped in JSON."""
+    trace_id, data_dir = saved_trace
+    assert main(["skeleton", trace_id, "--data-dir", str(data_dir), "--format", "json"]) == 0
+    out = capsys.readouterr().out
+    data = json.loads(out)
+    # Must be structured, not {"content": "<markdown>"}
+    assert "content" not in data
+    assert "runs" in data
+    assert "trace_id" in data
+    assert isinstance(data["runs"], list)
+    assert len(data["runs"]) > 0
+    # Each run must have an id (composable: agent can extract run IDs)
+    first = data["runs"][0]
+    assert "id" in first
+    assert "run_type" in first
+    assert "name" in first
+
+
+def test_run_detail_json_is_structured(saved_trace, capsys):
+    """run-detail --format json returns structured data, not markdown wrapped in JSON."""
+    trace_id, data_dir = saved_trace
+    assert main(
+        ["run-detail", trace_id, "run-llm-2", "--data-dir", str(data_dir), "--format", "json"]
+    ) == 0
+    out = capsys.readouterr().out
+    data = json.loads(out)
+    # Must be structured, not {"content": "<markdown>"}
+    assert "content" not in data
+    assert data["id"] == "run-llm-2"
+    assert data["run_type"] == "llm"
+    # Input messages must be structured objects, not prose
+    assert "input_messages" in data
+    assert isinstance(data["input_messages"], list)
+    assert len(data["input_messages"]) > 0
+    msg = data["input_messages"][0]
+    assert "role" in msg
+    assert "text" in msg
+
+
 def test_tool_metrics_command(saved_trace, capsys):
     trace_id, data_dir = saved_trace
     assert main(["tool-metrics", trace_id, "--data-dir", str(data_dir)]) == 0

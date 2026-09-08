@@ -162,6 +162,52 @@ def build_skeleton(runs: list[Run]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def skeleton_data(runs: list[Run]) -> dict[str, Any]:
+    """Structured skeleton data for JSON output (composable contract).
+
+    Returns a dict with trace_id, root summary, and a list of significant runs.
+    Each run entry includes: index, id, run_type, name, depth, parent_run_id,
+    status, total_tokens, latency_s, error.
+
+    Unlike build_skeleton (which returns markdown), this returns structured
+    data so an analyst agent can programmatically extract run IDs without
+    parsing prose.
+    """
+    sig = significant_runs(runs)
+    if not sig:
+        return {"trace_id": None, "root": None, "runs": []}
+
+    root = sig[0]
+    run_list: list[dict[str, Any]] = []
+    for i, run in enumerate(sig):
+        depth = len((run.dotted_order or "").split(".")) - 1
+        run_list.append(
+            {
+                "index": i,
+                "id": run.id,
+                "run_type": run.run_type.value,
+                "name": run.name,
+                "depth": depth,
+                "parent_run_id": run.parent_run_id,
+                "status": run.status,
+                "total_tokens": run.total_tokens,
+                "latency_s": _latency_s(run),
+                "error": run.error,
+            }
+        )
+
+    return {
+        "trace_id": root.trace_id,
+        "root": {
+            "name": root.name,
+            "status": root.status,
+            "total_tokens": root.total_tokens,
+            "latency_s": _latency_s(root),
+        },
+        "runs": run_list,
+    }
+
+
 # ---------------------------------------------------------------------------
 # L2 — narrative
 # ---------------------------------------------------------------------------
@@ -325,8 +371,27 @@ def run_detail(runs: list[Run], run_id: str) -> str:
     """Full untruncated context of one run, reconstructed from canonical data."""
     matches = [r for r in runs if str(r.id) == str(run_id)]
     if not matches:
-        raise ValueError(f"Run {run_id} not found in trace")
+        # Recoverable error: suggest how to find valid run IDs.
+        available = sorted(
+            f"  {r.id}  {r.run_type.value}  {r.name}" for r in significant_runs(runs)
+        )
+        hint = "Run `self-improve skeleton <trace_id>` for a compact overview."
+        if available:
+            sample = "\n".join(available[:10])
+            if len(available) > 10:
+                sample += f"\n  ... ({len(available) - 10} more)"
+            raise ValueError(
+                f"Run {run_id} not found in trace.\n\n"
+                f"Available significant runs:\n{sample}\n\n{hint}"
+            )
+        raise ValueError(f"Run {run_id} not found in trace.\n\n{hint}")
     run = matches[0]
+
+    # Find parent and child runs for navigation (connectedness).
+    parent = None
+    if run.parent_run_id:
+        parent = next((r for r in runs if r.id == run.parent_run_id), None)
+    children = [r for r in runs if r.parent_run_id == run.id]
 
     lines = [
         f"# Run detail — {run.name} ({run.run_type.value}) id={run.id}",
@@ -335,6 +400,22 @@ def run_detail(runs: list[Run], run_id: str) -> str:
         f"latency={_latency_s(run)}s error={run.error}",
         "",
     ]
+
+    # Navigation references (connectedness contract).
+    if parent or children:
+        lines.append("## Related runs")
+        lines.append("")
+        if parent:
+            lines.append(
+                f"Parent: {parent.name} ({parent.run_type.value}) id={parent.id}  "
+                f"→ `self-improve run-detail <trace_id> {parent.id}`"
+            )
+        for child in children:
+            lines.append(
+                f"Child:  {child.name} ({child.run_type.value}) id={child.id}  "
+                f"→ `self-improve run-detail <trace_id> {child.id}`"
+            )
+        lines.append("")
     if run.run_type == RunType.LLM:
         lines.append("## Input messages")
         for msg in run.input_messages:
@@ -360,6 +441,92 @@ def run_detail(runs: list[Run], run_id: str) -> str:
             json.dumps(run.outputs, indent=2, default=str, ensure_ascii=False),
         ]
     return "\n".join(lines) + "\n"
+
+
+def run_detail_data(runs: list[Run], run_id: str) -> dict[str, Any]:
+    """Structured run detail for JSON output (composable contract).
+
+    Returns a dict with run metadata, related runs (parent/children), and
+    either input_messages+output (for LLM runs) or inputs+outputs (for other
+    runs). Tool calls are included as structured objects, not prose.
+
+    Raises ValueError if the run is not found (same recovery as run_detail).
+    """
+    matches = [r for r in runs if str(r.id) == str(run_id)]
+    if not matches:
+        available = sorted(
+            f"  {r.id}  {r.run_type.value}  {r.name}" for r in significant_runs(runs)
+        )
+        hint = "Run `self-improve skeleton <trace_id>` for a compact overview."
+        if available:
+            sample = "\n".join(available[:10])
+            if len(available) > 10:
+                sample += f"\n  ... ({len(available) - 10} more)"
+            raise ValueError(
+                f"Run {run_id} not found in trace.\n\n"
+                f"Available significant runs:\n{sample}\n\n{hint}"
+            )
+        raise ValueError(f"Run {run_id} not found in trace.\n\n{hint}")
+    run = matches[0]
+
+    parent = None
+    if run.parent_run_id:
+        parent_run = next((r for r in runs if r.id == run.parent_run_id), None)
+        if parent_run:
+            parent = {
+                "id": parent_run.id,
+                "name": parent_run.name,
+                "run_type": parent_run.run_type.value,
+            }
+    children = [
+        {"id": r.id, "name": r.name, "run_type": r.run_type.value}
+        for r in runs
+        if r.parent_run_id == run.id
+    ]
+
+    result: dict[str, Any] = {
+        "id": run.id,
+        "trace_id": run.trace_id,
+        "run_type": run.run_type.value,
+        "name": run.name,
+        "status": run.status,
+        "total_tokens": run.total_tokens,
+        "latency_s": _latency_s(run),
+        "error": run.error,
+        "parent": parent,
+        "children": children,
+    }
+
+    if run.run_type == RunType.LLM:
+        result["input_messages"] = [
+            {
+                "role": msg.role,
+                "text": msg.text,
+                "tool_calls": [
+                    {"name": tc.name, "args": tc.args, "id": tc.id}
+                    for tc in msg.tool_calls
+                ],
+                "tool_call_id": msg.tool_call_id,
+            }
+            for msg in run.input_messages
+        ]
+        out = run.output_message
+        if out:
+            result["output"] = {
+                "role": out.role,
+                "text": out.text,
+                "tool_calls": [
+                    {"name": tc.name, "args": tc.args, "id": tc.id}
+                    for tc in out.tool_calls
+                ],
+            }
+        else:
+            result["output"] = run.outputs
+    else:
+        result["inputs"] = run.inputs
+        result["outputs"] = run.outputs
+
+    return result
 
 
 # ---------------------------------------------------------------------------

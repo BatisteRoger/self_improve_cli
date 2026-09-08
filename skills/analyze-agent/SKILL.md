@@ -1,6 +1,6 @@
 ---
 name: analyze-agent
-description: Systematic trace analysis workflow — read skeleton, check metrics for signals (repeated tools, context jumps, dead context), read narrative, drill into runs, produce structured observations. Use when analyzing an AI agent's execution trace to identify improvement opportunities.
+description: Systematic trace analysis workflow — read skeleton, check metrics for signals (repeated tools, context jumps, stale tool results), read narrative, drill into runs, produce structured observations. Use when analyzing an AI agent's execution trace to identify improvement opportunities.
 ---
 
 # Analyze an agent trace
@@ -44,7 +44,7 @@ self-improve tool-metrics <trace_id>
 ```
 
 Signals to look for:
-- **Repeated calls on the same target** (>3 calls to the same tool with similar args — possible redundant work)
+- **Repeated calls on the same target** (>3 calls to the same tool with similar args — investigate whether the target changed between calls; repeated calls on an unchanged target may indicate redundant work, but repeated calls on a changing target are legitimate)
 - **Low modify-call granularity** (tools that make tiny changes — possible inefficiency)
 - **High token attribution** (tools that dominate context growth — candidates for output trimming)
 
@@ -59,7 +59,7 @@ self-improve context-metrics <trace_id>
 
 Signals to look for:
 - **Context jumps** (>5K token growth between steps — possible unbounded tool output)
-- **Dead context ratio > 40%** (most of the context is not contributing to the output — possible prompt bloat or irrelevant history)
+- **Stale tool-result ratio > 40%** (many tool results are older than the 5 most recent — possible context bloat from old tool output. This measures age, not usefulness; older results may still be relevant)
 - **Monotonic growth** (context only grows, never shrinks — no summarization or pruning)
 
 These are deterministic facts. They do not by themselves prove a problem —
@@ -77,7 +77,7 @@ analysis input.
 
 Look for:
 - Loops or cycles (the agent repeating the same reasoning or tool calls)
-- Tool calls that return errors the agent doesn't handle
+- Tool calls that return errors — check whether the error appeared in the subsequent model input (use `run-detail` or `context-at` to verify). A recorded tool error does not guarantee the model received it as feedback
 - Messages that don't advance toward the goal
 - Prompt instructions that are ignored or misinterpreted
 
@@ -164,9 +164,31 @@ signals; the analyst decides whether the trade-off was worth it.
    `fault_locus` only if review supports it.
 4. **Distinguish trajectory from run quality.** An agent taking a complex
    approach is not the same as a step failing. Don't conflate them.
-5. **Weigh against the triangle.** Every observation implies a trade-off
+5. **"No visible verification" is different from "the result is incorrect."**
+   State which one the evidence supports. An agent may produce a correct
+   result without explicit verification, or an incorrect result despite
+   verification. Don't conflate absence of verification with absence of
+   correctness.
+6. **Weigh against the triangle.** Every observation implies a trade-off
    between quality, cost, and speed. State which axis is affected and
    whether the trade-off seems worth it — but defer the final call to a
    human reviewer.
-6. **Check the sanitization report first.** If `complete: false`, the
+7. **Check the sanitization report first.** If `complete: false`, the
    anonymization may be incomplete — be careful about quoting trace content.
+
+## Diagnostic benchmark
+
+A set of 5 synthetic benchmark traces with known issues is available in
+`tests/fixtures/benchmark/`. These traces are used to evaluate whether
+analysis skills help or hurt diagnosis:
+
+- `ignored_tool_error` — agent ignores a 403 and claims success
+- `unverified_completion` — agent claims success without verifying
+- `legitimate_repetition` — agent reads a file twice because it changed (should NOT be flagged)
+- `lost_constraint_after_compaction` — a constraint disappears and is violated
+- `clean_execution` — a successful trace (false-positive control)
+
+The benchmark measures: correct issue detection, correct evidence citation,
+avoidance of false accusations on clean traces, and distinction between
+observation and speculation. See `tests/fixtures/benchmark/spec.py` for the
+full spec.

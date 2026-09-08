@@ -325,8 +325,13 @@ def _cmd_fetch(args: argparse.Namespace) -> int:
 def _cmd_skeleton(args: argparse.Namespace) -> int:
     store = _get_store(args)
     trace = store.load_trace(args.trace_id)
-    content = build_skeleton(trace.runs)
-    _output(content, args)
+    if args.format == "json":
+        from self_improve_cli.representations import skeleton_data
+
+        _output(skeleton_data(trace.runs), args)
+    else:
+        content = build_skeleton(trace.runs)
+        _output(content, args)
     return EXIT_OK
 
 
@@ -486,8 +491,13 @@ def _cmd_context_metrics(args: argparse.Namespace) -> int:
 def _cmd_run_detail(args: argparse.Namespace) -> int:
     store = _get_store(args)
     trace = store.load_trace(args.trace_id)
-    content = run_detail(trace.runs, args.run_id)
-    _output(content, args)
+    if args.format == "json":
+        from self_improve_cli.representations import run_detail_data
+
+        _output(run_detail_data(trace.runs, args.run_id), args)
+    else:
+        content = run_detail(trace.runs, args.run_id)
+        _output(content, args)
     return EXIT_OK
 
 

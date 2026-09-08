@@ -148,8 +148,35 @@ def test_run_detail_unknown_id_raises():
     runs = _mini_runs()
     import pytest
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="not found in trace"):
         run_detail(runs, "nope")
+
+
+def test_run_detail_unknown_id_suggests_skeleton():
+    """Recoverable error: the message should suggest how to find valid run IDs."""
+    runs = _mini_runs()
+    import pytest
+
+    with pytest.raises(ValueError, match="self-improve skeleton"):
+        run_detail(runs, "nope")
+
+
+def test_run_detail_shows_parent_and_child_refs():
+    """Connectedness: run-detail should expose parent and child run references."""
+    runs = _mini_runs()
+    # run-llm-2 is a child of the root run; check that parent is shown.
+    detail = run_detail(runs, "run-llm-2")
+    assert "## Related runs" in detail
+    assert "Parent:" in detail
+
+
+def test_run_detail_no_related_runs_section_when_isolated():
+    """A root run with no children should not show an empty Related runs section."""
+    from tests.helpers import make_root
+
+    single = [make_root()]
+    detail = run_detail(single, single[0].id)
+    assert "## Related runs" not in detail
 
 
 def test_empty_trace_does_not_crash():

@@ -123,7 +123,7 @@ canonical label as the `primary_pattern`:
 | Failed-command retry (same call after error) | `recovery.failed_recovery` | Add `recovery_mode=blind_retry` |
 | Repeated calls on same target (>3) | `tool.low_signal_arguments` or `control.nonprogress_loop` | Depends on whether the calls advance |
 | Context jump (>5K tokens between steps) | `context.compaction_loss` or informational | Only if a compaction event occurred |
-| Dead context ratio > 40% | Informational — no canonical label | Points to `context.*` investigation |
+| Stale tool-result ratio > 40% | Informational — no canonical label | Measures age, not usefulness. Points to `context.*` investigation |
 | Monotonic context growth | Informational — no canonical label | Points to `context.*` investigation |
 
 ## Adding new labels

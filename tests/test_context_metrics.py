@@ -3,8 +3,8 @@
 from self_improve_cli.domain import Message, ToolCall
 from self_improve_cli.metrics.context_metrics import (
     build_context_metrics,
-    dead_context_ratio,
     growth_curve,
+    stale_tool_result_ratio,
     token_decomposition,
 )
 from self_improve_cli.representations import significant_runs
@@ -97,11 +97,11 @@ def test_growth_curve_empty():
     assert growth_curve([])["steps"] == []
 
 
-def test_dead_context_ratio_empty_trace():
-    assert dead_context_ratio([]) == []
+def test_stale_tool_result_ratio_empty_trace():
+    assert stale_tool_result_ratio([]) == []
 
 
-def test_dead_context_ratio_counts_tool_messages():
+def test_stale_tool_result_ratio_counts_tool_messages():
     runs = [
         make_root(),
         make_llm(
@@ -129,14 +129,14 @@ def test_dead_context_ratio_counts_tool_messages():
             ],
         ),
     ]
-    ratios = dead_context_ratio(runs)
+    ratios = stale_tool_result_ratio(runs)
     assert len(ratios) == 2
     assert ratios[0]["total_tool_msgs"] == 0
     assert ratios[1]["total_tool_msgs"] == 1
     assert ratios[1]["ratio"] == 0.0
 
 
-def test_dead_context_ratio_marks_old_tool_results():
+def test_stale_tool_result_ratio_marks_old_tool_results():
     msgs = []
     for n in range(7):
         msgs.append(
@@ -146,9 +146,9 @@ def test_dead_context_ratio_marks_old_tool_results():
         )
         msgs.append(Message(role="tool", text="x" * 40, tool_call_id=f"c{n}"))
     llm = make_llm("1", prompt_tokens=5000, input_messages=msgs)
-    ratios = dead_context_ratio([make_root(), llm])
+    ratios = stale_tool_result_ratio([make_root(), llm])
     assert ratios[0]["total_tool_msgs"] == 7
-    assert ratios[0]["dead_tool_msgs"] == 2
+    assert ratios[0]["stale_tool_msgs"] == 2
 
 
 def test_build_context_metrics_empty_trace():

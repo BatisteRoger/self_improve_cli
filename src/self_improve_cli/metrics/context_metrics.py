@@ -3,12 +3,13 @@
 Pure functions over canonical Run objects. No SDK dependency, no LLM calls:
 deterministic and recomputable from sanitized data.
 
-The metrics are raw facts (token counts per category, deltas, dead context
-ratio). Interpreting them ("context bloat", "architecture issue") is the job
-of the Analyst Agent that consumes this file, not of this module.
+The metrics are raw facts (token counts per category, deltas, stale
+tool-result ratio). Interpreting them ("context bloat", "architecture
+issue") is the job of the Analyst Agent that consumes this file, not of
+this module.
 
 APPROXIMATE: token categories use chars/4 estimates; overhead is a residual;
-dead context is a position-based proxy. See notes in each section.
+stale tool-result ratio is a position-based proxy. See notes in each section.
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ from self_improve_cli.representations import significant_runs
 
 _JUMP_THRESHOLD = 5000
 _DROP_RATIO = 0.20
-_DEAD_CONTEXT_K = 5
+_STALE_TOOL_RESULT_K = 5
 _CHARS_PER_TOKEN = 4
 
 
@@ -124,39 +125,48 @@ def token_decomposition(runs: list[Run]) -> list[dict[str, Any]]:
     return [_token_decomposition(r) for r in _main_loop_llm_runs(sig)]
 
 
-# --- 2. Dead context ratio (approximate) ------------------------------------
+# --- 2. Stale tool-result ratio (approximate) --------------------------------
 
 
-def _dead_context_ratio(sig: list[Run], k: int = _DEAD_CONTEXT_K) -> list[dict[str, Any]]:
-    """Dead-context ratio per main-loop LLM step (APPROXIMATE).
+def _stale_tool_result_ratio(sig: list[Run], k: int = _STALE_TOOL_RESULT_K) -> list[dict[str, Any]]:
+    """Stale tool-result ratio per main-loop LLM step (APPROXIMATE).
 
-    Within each step's accumulated context, a ToolMessage is "live" if it is
-    among the K most recent tool results; older ToolMessages count as "dead"
-    (stale tool output still occupying context). This is a deterministic,
+    Within each step's accumulated context, a ToolMessage is "recent" if it is
+    among the K most recent tool results; older ToolMessages count as "stale"
+    (old tool output still occupying context). This is a deterministic,
     position-based proxy: it does not know whether old content is actually
-    reused, only that it is old.
+    reused, only that it is old. A high ratio does not mean the old results
+    are useless — it means they are old.
 
-    Returns one dict per step: {step_index, total_tool_msgs, dead_tool_msgs, ratio}.
+    Returns one dict per step: {step_index, total_tool_msgs, stale_tool_msgs, ratio}.
     """
     results: list[dict[str, Any]] = []
     for i, llm_run in enumerate(_main_loop_llm_runs(sig)):
         tool_msgs = [m for m in llm_run.input_messages if m.role == "tool"]
         total = len(tool_msgs)
-        dead = max(total - k, 0)
+        stale = max(total - k, 0)
         results.append(
             {
                 "step_index": i,
                 "total_tool_msgs": total,
-                "dead_tool_msgs": dead,
-                "ratio": round(dead / total, 2) if total else 0.0,
+                "stale_tool_msgs": stale,
+                "ratio": round(stale / total, 2) if total else 0.0,
             }
         )
     return results
 
 
-def dead_context_ratio(runs: list[Run], k: int = _DEAD_CONTEXT_K) -> list[dict[str, Any]]:
-    """Dead context ratio at each main-loop LLM step (approximate)."""
-    return _dead_context_ratio(significant_runs(runs), k)
+def stale_tool_result_ratio(runs: list[Run], k: int = _STALE_TOOL_RESULT_K) -> list[dict[str, Any]]:
+    """Stale tool-result ratio at each main-loop LLM step (approximate).
+
+    Measures age, not usefulness. Older tool results may still be relevant.
+    """
+    return _stale_tool_result_ratio(significant_runs(runs), k)
+
+
+# Backward-compat alias. The previous name was misleading: "dead context"
+# implied the content was not contributing, but the metric only measures age.
+dead_context_ratio = stale_tool_result_ratio
 
 
 # --- 3. Growth curve --------------------------------------------------------
@@ -236,9 +246,9 @@ def build_context_metrics(runs: list[Run]) -> str:
     if llm_runs:
         sections += ["## Token decomposition (per main-loop LLM step)", ""]
         decomps = [_token_decomposition(r) for r in llm_runs]
-        dead_ratios = _dead_context_ratio(sig)
+        stale_ratios = _stale_tool_result_ratio(sig)
 
-        for i, (decomp, dead) in enumerate(zip(decomps, dead_ratios)):
+        for i, (decomp, stale) in enumerate(zip(decomps, stale_ratios)):
             cats = decomp["categories"]
             pt = decomp["prompt_tokens"]
             per_tool = decomp["per_tool"]
@@ -255,13 +265,14 @@ def build_context_metrics(runs: list[Run]) -> str:
                 f"Step {i:3d} | {pt:,} | "
                 f"sys:{_fmt_k(cats['system'])} human:{_fmt_k(cats['human'])} "
                 f"ai:{_fmt_k(cats['ai'])} tool:{_fmt_k(cats['tool'])}{tool_str} "
-                f"overhead:{_fmt_k(oh)} | dead: {int(dead['ratio'] * 100)}%"
+                f"overhead:{_fmt_k(oh)} | stale: {int(stale['ratio'] * 100)}%"
             )
         sections += [
             "",
             "Notes: token categories are chars/4 estimates (APPROXIMATE); overhead is "
             "the residual vs real prompt_tokens (tool schemas + estimation error). "
-            f"dead = % of tool results older than the {_DEAD_CONTEXT_K} most recent (approximate).",
+            f"stale = % of tool results older than the {_STALE_TOOL_RESULT_K} most recent. "
+            "This measures age, not usefulness — older results may still be relevant.",
             "",
         ]
 

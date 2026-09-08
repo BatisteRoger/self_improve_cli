@@ -254,6 +254,10 @@ def build_tool_metrics(runs: list[Run]) -> str:
         for name, targets in repeated.items():
             parts = ", ".join(f"{t} x{c}" for t, c in targets)
             sections.append(f"{name}: {parts}")
+        sections.append(
+            "Note: repeated calls may be legitimate (e.g. the target changed between "
+            "calls). Investigate whether the target changed before concluding redundancy."
+        )
     else:
         sections.append("(none above threshold)")
     sections.append("")

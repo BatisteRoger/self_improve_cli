@@ -41,8 +41,8 @@ tool call) but harm the conversation overall. A tool output that was
 trimmed might contain the information the agent needed three steps
 later. A compaction that dropped a constraint might cause a goal drift
 that only surfaces at the end. **This is where human investigation is
-essential** — the CLI can surface the signals (context jumps, dead
-context, compaction events), but whether a local optimization helped or
+essential** — the CLI can surface the signals (context jumps, stale
+tool results, compaction events), but whether a local optimization helped or
 harmed the whole task is a judgment that requires stepping back and
 looking at the entire trace in context.
 
@@ -80,6 +80,46 @@ Dependency direction: `source -> canonical model -> privacy/storage -> determini
 - `cli/` — command parsing, stable exit codes, stdout/stderr rules, Markdown/JSON output, and agent-oriented help.
 
 Keep the core representation and metrics layers free of network calls and LLM calls. This preserves recomputability and makes them easy to test.
+
+## Evidence navigation contract
+
+Every analysis command (existing and future) should satisfy this contract.
+The CLI and skills form one interface for the Analyst Agent — the contract
+governs both.
+
+1. **Predictable** — consistent identifiers, selectors, output structure, and
+   terminology across commands. An analyst should not need to learn different
+   step-number conventions across views. Command names describe the question
+   being answered, not the internal module name.
+
+2. **Bounded** — compact defaults; selective expansion; explicit omissions.
+   A way to continue: "show me what was omitted" without re-running the whole
+   command. Never silently turn "show me the relevant evidence" into a huge
+   context dump. Distinguish CLI output bounds (enforceable by the CLI) from
+   analyst token budget (requires cooperation with the harness).
+
+3. **Connected** — outputs expose stable references to related evidence:
+   parent run and child runs, tool call → tool result pairing, tool result →
+   subsequent model input containing it, successive model calls in the same
+   execution branch. An analyst should be able to follow a reference from one
+   view to another without guessing.
+
+4. **Honest** — clearly distinguish recorded facts, approximate measurements
+   (labeled as approximate), inferred relationships (labeled as inferred), and
+   unavailable evidence (labeled as unavailable). "Not recorded" must not look
+   like "did not happen." Repeated action ≠ unnecessary action. Recorded tool
+   error ≠ feedback the model received. Missing verification ≠ incorrect
+   result.
+
+5. **Recoverable** — an invalid selector or missing artifact produces a
+   precise explanation and a valid next action. Recovery should not require
+   guessing flags or inspecting Python source. Error messages suggest the
+   correct command or selector.
+
+6. **Composable** — readable Markdown for direct consumption; genuinely
+   structured JSON where programmatic selection is useful. Avoid making agents
+   parse prose to recover identifiers already known to the CLI. Useful next
+   actions should be grounded in available data — not generated diagnoses.
 
 ## CLI usage details
 
