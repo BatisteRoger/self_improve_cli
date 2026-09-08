@@ -375,9 +375,7 @@ def build_lost_constraint_after_compaction() -> list[Run]:
     """
     root = make_root(trace_id="lost_constraint_after_compaction")
     root.inputs = {
-        "messages": [
-            {"type": "human", "content": "Fetch the data without using the network."}
-        ]
+        "messages": [{"type": "human", "content": "Fetch the data without using the network."}]
     }
     root.outputs = {"messages": [{"type": "ai", "content": "Done."}]}
 
@@ -452,9 +450,7 @@ def build_clean_execution() -> list[Run]:
     root.inputs = {
         "messages": [{"type": "human", "content": "Update the version in package.json."}]
     }
-    root.outputs = {
-        "messages": [{"type": "ai", "content": "Done. Version updated to 1.2.0."}]
-    }
+    root.outputs = {"messages": [{"type": "ai", "content": "Done. Version updated to 1.2.0."}]}
 
     llm1 = make_run(
         "llm-1",

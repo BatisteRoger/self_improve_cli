@@ -586,8 +586,7 @@ def run_detail_data(runs: list[Run], run_id: str) -> dict[str, Any]:
                 "role": msg.role,
                 "text": msg.text,
                 "tool_calls": [
-                    {"name": tc.name, "args": tc.args, "id": tc.id}
-                    for tc in msg.tool_calls
+                    {"name": tc.name, "args": tc.args, "id": tc.id} for tc in msg.tool_calls
                 ],
                 "tool_call_id": msg.tool_call_id,
             }
@@ -599,8 +598,7 @@ def run_detail_data(runs: list[Run], run_id: str) -> dict[str, Any]:
                 "role": out.role,
                 "text": out.text,
                 "tool_calls": [
-                    {"name": tc.name, "args": tc.args, "id": tc.id}
-                    for tc in out.tool_calls
+                    {"name": tc.name, "args": tc.args, "id": tc.id} for tc in out.tool_calls
                 ],
             }
         else:
@@ -698,12 +696,9 @@ def context_at(
         lines.append(f"## Filtered to tool_call_id={tool_call_id}")
         lines.append("")
         if not msgs:
+            lines.append(f"No message with tool_call_id={tool_call_id} found at step {step}.")
             lines.append(
-                f"No message with tool_call_id={tool_call_id} found at step {step}."
-            )
-            lines.append(
-                "Available tool_call_ids at this step: "
-                + ", ".join(_tool_call_ids_at_step(run))
+                "Available tool_call_ids at this step: " + ", ".join(_tool_call_ids_at_step(run))
                 or "(none)"
             )
             return "\n".join(lines) + "\n"
@@ -743,9 +738,7 @@ def context_at(
             f"Next step {step + 1}: {nxt.name} id={nxt.id}  "
             f"→ `self-improve context-at <trace_id> {step + 1}`"
         )
-    lines.append(
-        f"Full run detail  → `self-improve run-detail <trace_id> {run.id}`"
-    )
+    lines.append(f"Full run detail  → `self-improve run-detail <trace_id> {run.id}`")
     return "\n".join(lines) + "\n"
 
 
@@ -783,9 +776,7 @@ def _context_at_diff(
     """Show what changed in the message list between two steps."""
     for label, s in (("from_step", from_step), ("to_step", to_step)):
         if s < 0 or s >= len(llm_runs):
-            raise ValueError(
-                f"{label}={s} is out of range. Valid steps: 0..{len(llm_runs) - 1}."
-            )
+            raise ValueError(f"{label}={s} is out of range. Valid steps: 0..{len(llm_runs) - 1}.")
 
     a = llm_runs[from_step]
     b = llm_runs[to_step]
@@ -855,9 +846,7 @@ def _context_at_diff(
             "this is an inferred change, not a recorded fact."
         )
     elif len(msgs_b) > len(msgs_a):
-        lines.append(
-            "Note: the message list grew. New messages were added between steps."
-        )
+        lines.append("Note: the message list grew. New messages were added between steps.")
 
     return "\n".join(lines) + "\n"
 
@@ -885,9 +874,7 @@ def context_at_data(
         return _context_at_diff_data(runs, llm_runs, from_step, to_step, full=full)
 
     if step < 0 or step >= len(llm_runs):
-        raise ValueError(
-            f"Step {step} is out of range. Valid steps: 0..{len(llm_runs) - 1}."
-        )
+        raise ValueError(f"Step {step} is out of range. Valid steps: 0..{len(llm_runs) - 1}.")
 
     run = llm_runs[step]
     msgs = run.input_messages
@@ -903,8 +890,7 @@ def context_at_data(
                 "role": msg.role,
                 "text": _truncate(msg.text, limit) if not full else msg.text,
                 "tool_calls": [
-                    {"name": tc.name, "args": tc.args, "id": tc.id}
-                    for tc in msg.tool_calls
+                    {"name": tc.name, "args": tc.args, "id": tc.id} for tc in msg.tool_calls
                 ],
                 "tool_call_id": msg.tool_call_id,
             }
@@ -931,8 +917,7 @@ def context_at_data(
                 "role": out.role,
                 "text": _truncate(out.text, limit) if not full else out.text,
                 "tool_calls": [
-                    {"name": tc.name, "args": tc.args, "id": tc.id}
-                    for tc in out.tool_calls
+                    {"name": tc.name, "args": tc.args, "id": tc.id} for tc in out.tool_calls
                 ],
             }
         else:
@@ -961,9 +946,7 @@ def _context_at_diff_data(
     """Structured diff of message lists between two steps."""
     for label, s in (("from_step", from_step), ("to_step", to_step)):
         if s < 0 or s >= len(llm_runs):
-            raise ValueError(
-                f"{label}={s} is out of range. Valid steps: 0..{len(llm_runs) - 1}."
-            )
+            raise ValueError(f"{label}={s} is out of range. Valid steps: 0..{len(llm_runs) - 1}.")
 
     a = llm_runs[from_step]
     b = llm_runs[to_step]
@@ -1019,9 +1002,7 @@ def _msg_to_dict(msg: Message, index: int, limit: int) -> dict[str, Any]:
         "index": index,
         "role": msg.role,
         "text": _truncate(msg.text, limit),
-        "tool_calls": [
-            {"name": tc.name, "args": tc.args, "id": tc.id} for tc in msg.tool_calls
-        ],
+        "tool_calls": [{"name": tc.name, "args": tc.args, "id": tc.id} for tc in msg.tool_calls],
         "tool_call_id": msg.tool_call_id,
     }
 
@@ -1144,9 +1125,7 @@ def error_neighborhood(runs: list[Run], *, window: int = 1) -> str:
     if not sig:
         return "# Error neighborhood\n\n(empty trace)\n"
 
-    error_indices = [
-        i for i, r in enumerate(sig) if r.error and not _is_infra_cancelled(r.error)
-    ]
+    error_indices = [i for i, r in enumerate(sig) if r.error and not _is_infra_cancelled(r.error)]
     if not error_indices:
         return "# Error neighborhood\n\nNo agent errors in this trace.\n"
 
@@ -1170,9 +1149,7 @@ def error_neighborhood(runs: list[Run], *, window: int = 1) -> str:
             r = sig[j]
             marker = " **[ERROR]**" if j == ei else ""
             outcome = r.status or "?"
-            lines.append(
-                f"- step {j} [{r.run_type.value}] {r.name} id={r.id} — {outcome}{marker}"
-            )
+            lines.append(f"- step {j} [{r.run_type.value}] {r.name} id={r.id} — {outcome}{marker}")
             if r.error and j != ei:
                 lines.append(f"  also errored: {_truncate(str(r.error), 200)}")
         lines.append("")
@@ -1200,9 +1177,7 @@ def error_neighborhood_data(runs: list[Run], *, window: int = 1) -> dict[str, An
     if not sig:
         return {"trace_id": runs[0].trace_id if runs else "", "errors": []}
 
-    error_indices = [
-        i for i, r in enumerate(sig) if r.error and not _is_infra_cancelled(r.error)
-    ]
+    error_indices = [i for i, r in enumerate(sig) if r.error and not _is_infra_cancelled(r.error)]
     errors_out: list[dict[str, Any]] = []
     for ei in error_indices:
         start = max(0, ei - window)

@@ -409,8 +409,7 @@ def test_significant_runs_consistent_across_types():
     kept_uuid = significant_runs([root, child_uuid])
     kept_str = significant_runs([root, child_str])
     assert len(kept_uuid) == len(kept_str), (
-        f"UUID vs str parent_run_id gave different counts: "
-        f"{len(kept_uuid)} vs {len(kept_str)}"
+        f"UUID vs str parent_run_id gave different counts: {len(kept_uuid)} vs {len(kept_str)}"
     )
 
 

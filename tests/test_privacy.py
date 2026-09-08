@@ -122,8 +122,7 @@ def test_anonymize_replaces_bearer_token(backend):
     _, report = anonymize_trace(trace, backend=backend)
     # JWT should be caught (regex takes priority over Presidio's URL detector)
     assert (
-        report.entity_counts.get("JWT", 0) >= 1
-        or report.entity_counts.get("BEARER_TOKEN", 0) >= 1
+        report.entity_counts.get("JWT", 0) >= 1 or report.entity_counts.get("BEARER_TOKEN", 0) >= 1
     )
 
 

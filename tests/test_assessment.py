@@ -95,14 +95,22 @@ def test_save_assessment_round_trips_unknown_defaults(tmp_path):
 def test_assess_set_and_show(saved_trace, capsys):
     trace_id, data_dir = saved_trace
     # Set
-    rc = main([
-        "assess", trace_id,
-        "--task", "Fix the login bug",
-        "--outcome", "success",
-        "--source", "human",
-        "--notes", "All tests pass.",
-        "--data-dir", str(data_dir),
-    ])
+    rc = main(
+        [
+            "assess",
+            trace_id,
+            "--task",
+            "Fix the login bug",
+            "--outcome",
+            "success",
+            "--source",
+            "human",
+            "--notes",
+            "All tests pass.",
+            "--data-dir",
+            str(data_dir),
+        ]
+    )
     assert rc == 0
     out = capsys.readouterr().out
     data = json.loads(out)
@@ -132,12 +140,18 @@ def test_assess_show_when_none(saved_trace, capsys):
 def test_assess_clear(saved_trace, capsys):
     trace_id, data_dir = saved_trace
     # Set first
-    main([
-        "assess", trace_id,
-        "--task", "Test",
-        "--outcome", "unknown",
-        "--data-dir", str(data_dir),
-    ])
+    main(
+        [
+            "assess",
+            trace_id,
+            "--task",
+            "Test",
+            "--outcome",
+            "unknown",
+            "--data-dir",
+            str(data_dir),
+        ]
+    )
     capsys.readouterr()  # clear output
 
     # Clear
@@ -155,21 +169,33 @@ def test_assess_update_partial(saved_trace, capsys):
     """Updating with only --notes preserves existing task/outcome."""
     trace_id, data_dir = saved_trace
     # Set full assessment
-    main([
-        "assess", trace_id,
-        "--task", "Original task",
-        "--outcome", "partial",
-        "--source", "test",
-        "--data-dir", str(data_dir),
-    ])
+    main(
+        [
+            "assess",
+            trace_id,
+            "--task",
+            "Original task",
+            "--outcome",
+            "partial",
+            "--source",
+            "test",
+            "--data-dir",
+            str(data_dir),
+        ]
+    )
     capsys.readouterr()
 
     # Update only notes
-    rc = main([
-        "assess", trace_id,
-        "--notes", "Updated notes.",
-        "--data-dir", str(data_dir),
-    ])
+    rc = main(
+        [
+            "assess",
+            trace_id,
+            "--notes",
+            "Updated notes.",
+            "--data-dir",
+            str(data_dir),
+        ]
+    )
     assert rc == 0
     out = capsys.readouterr().out
     data = json.loads(out)
@@ -181,11 +207,16 @@ def test_assess_update_partial(saved_trace, capsys):
 def test_assess_without_task_when_setting_fails(saved_trace, capsys):
     """Setting with --outcome but no --task (and no existing assessment) fails."""
     trace_id, data_dir = saved_trace
-    rc = main([
-        "assess", trace_id,
-        "--outcome", "success",
-        "--data-dir", str(data_dir),
-    ])
+    rc = main(
+        [
+            "assess",
+            trace_id,
+            "--outcome",
+            "success",
+            "--data-dir",
+            str(data_dir),
+        ]
+    )
     assert rc == 2  # EXIT_USAGE
     err = capsys.readouterr().err
     assert "--task is required" in err
@@ -198,13 +229,20 @@ def test_assess_without_task_when_setting_fails(saved_trace, capsys):
 
 def test_skeleton_shows_assessment_header(saved_trace, capsys):
     trace_id, data_dir = saved_trace
-    main([
-        "assess", trace_id,
-        "--task", "Fix the login bug",
-        "--outcome", "success",
-        "--source", "human",
-        "--data-dir", str(data_dir),
-    ])
+    main(
+        [
+            "assess",
+            trace_id,
+            "--task",
+            "Fix the login bug",
+            "--outcome",
+            "success",
+            "--source",
+            "human",
+            "--data-dir",
+            str(data_dir),
+        ]
+    )
     capsys.readouterr()
 
     rc = main(["skeleton", trace_id, "--data-dir", str(data_dir)])
@@ -224,13 +262,20 @@ def test_skeleton_no_assessment_header_when_absent(saved_trace, capsys):
 
 def test_skeleton_json_includes_assessment(saved_trace, capsys):
     trace_id, data_dir = saved_trace
-    main([
-        "assess", trace_id,
-        "--task", "Fix the login bug",
-        "--outcome", "partial",
-        "--source", "test",
-        "--data-dir", str(data_dir),
-    ])
+    main(
+        [
+            "assess",
+            trace_id,
+            "--task",
+            "Fix the login bug",
+            "--outcome",
+            "partial",
+            "--source",
+            "test",
+            "--data-dir",
+            str(data_dir),
+        ]
+    )
     capsys.readouterr()
 
     rc = main(["skeleton", trace_id, "--format", "json", "--data-dir", str(data_dir)])
@@ -253,13 +298,20 @@ def test_skeleton_json_no_assessment_key_when_absent(saved_trace, capsys):
 
 def test_info_includes_assessment(saved_trace, capsys):
     trace_id, data_dir = saved_trace
-    main([
-        "assess", trace_id,
-        "--task", "Fix the login bug",
-        "--outcome", "success",
-        "--source", "human",
-        "--data-dir", str(data_dir),
-    ])
+    main(
+        [
+            "assess",
+            trace_id,
+            "--task",
+            "Fix the login bug",
+            "--outcome",
+            "success",
+            "--source",
+            "human",
+            "--data-dir",
+            str(data_dir),
+        ]
+    )
     capsys.readouterr()
 
     rc = main(["info", trace_id, "--format", "json", "--data-dir", str(data_dir)])

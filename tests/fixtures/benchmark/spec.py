@@ -21,8 +21,7 @@ BENCHMARK_TRACES: list[dict[str, Any]] = [
     {
         "id": "ignored_tool_error",
         "description": (
-            "Agent continued after a tool returned a 403 error "
-            "without adapting its approach."
+            "Agent continued after a tool returned a 403 error without adapting its approach."
         ),
         "known_issue": "ignored_tool_error",
         "should_not_find": ["redundant_work", "unverified_completion"],
@@ -35,8 +34,7 @@ BENCHMARK_TRACES: list[dict[str, Any]] = [
     {
         "id": "unverified_completion",
         "description": (
-            "Agent claimed success without running any verification "
-            "after the final edit."
+            "Agent claimed success without running any verification after the final edit."
         ),
         "known_issue": "unverified_completion",
         "should_not_find": ["ignored_tool_error", "redundant_work"],
@@ -60,15 +58,13 @@ BENCHMARK_TRACES: list[dict[str, Any]] = [
         ],
         "evidence_run_ids": ["run-tool-1", "run-tool-2"],
         "expected_next_check": (
-            "Verify that the file content changed between reads "
-            "(diff the tool outputs)."
+            "Verify that the file content changed between reads (diff the tool outputs)."
         ),
     },
     {
         "id": "lost_constraint_after_compaction",
         "description": (
-            "A user constraint disappeared from the context and "
-            "the agent violated it."
+            "A user constraint disappeared from the context and the agent violated it."
         ),
         "known_issue": "lost_constraint",
         "should_not_find": ["redundant_work", "ignored_tool_error"],
@@ -81,8 +77,7 @@ BENCHMARK_TRACES: list[dict[str, Any]] = [
     {
         "id": "clean_execution",
         "description": (
-            "A successful trace that should NOT be criticized. "
-            "False-positive control."
+            "A successful trace that should NOT be criticized. False-positive control."
         ),
         "known_issue": "none",
         "should_not_find": [
@@ -93,8 +88,7 @@ BENCHMARK_TRACES: list[dict[str, Any]] = [
         ],
         "evidence_run_ids": [],
         "expected_next_check": (
-            "None — the trace is clean. If a finding is produced, "
-            "it is a false positive."
+            "None — the trace is clean. If a finding is produced, it is a false positive."
         ),
     },
 ]

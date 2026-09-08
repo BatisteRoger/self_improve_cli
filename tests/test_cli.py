@@ -161,9 +161,10 @@ def test_skeleton_json_is_structured(saved_trace, capsys):
 def test_run_detail_json_is_structured(saved_trace, capsys):
     """run-detail --format json returns structured data, not markdown wrapped in JSON."""
     trace_id, data_dir = saved_trace
-    assert main(
-        ["run-detail", trace_id, "run-llm-2", "--data-dir", str(data_dir), "--format", "json"]
-    ) == 0
+    assert (
+        main(["run-detail", trace_id, "run-llm-2", "--data-dir", str(data_dir), "--format", "json"])
+        == 0
+    )
     out = capsys.readouterr().out
     data = json.loads(out)
     # Must be structured, not {"content": "<markdown>"}
@@ -204,9 +205,7 @@ def test_context_at_command_step_one(saved_trace, capsys):
 def test_context_at_inputs_only(saved_trace, capsys):
     """`--inputs-only` omits the output section."""
     trace_id, data_dir = saved_trace
-    assert main(
-        ["context-at", trace_id, "0", "--inputs-only", "--data-dir", str(data_dir)]
-    ) == 0
+    assert main(["context-at", trace_id, "0", "--inputs-only", "--data-dir", str(data_dir)]) == 0
     out = capsys.readouterr().out
     assert "## Input messages" in out
     assert "## Output" not in out
@@ -215,9 +214,7 @@ def test_context_at_inputs_only(saved_trace, capsys):
 def test_context_at_tool_filter(saved_trace, capsys):
     """`--tool <id>` isolates one tool result."""
     trace_id, data_dir = saved_trace
-    assert main(
-        ["context-at", trace_id, "1", "--tool", "call-1", "--data-dir", str(data_dir)]
-    ) == 0
+    assert main(["context-at", trace_id, "1", "--tool", "call-1", "--data-dir", str(data_dir)]) == 0
     out = capsys.readouterr().out
     assert "tool_call_id=call-1" in out
     assert "You are a helpful agent." not in out
@@ -226,19 +223,22 @@ def test_context_at_tool_filter(saved_trace, capsys):
 def test_context_at_diff(saved_trace, capsys):
     """`--from 0 --to 1` shows the diff between two steps."""
     trace_id, data_dir = saved_trace
-    assert main(
-        [
-            "context-at",
-            trace_id,
-            "0",
-            "--from",
-            "0",
-            "--to",
-            "1",
-            "--data-dir",
-            str(data_dir),
-        ]
-    ) == 0
+    assert (
+        main(
+            [
+                "context-at",
+                trace_id,
+                "0",
+                "--from",
+                "0",
+                "--to",
+                "1",
+                "--data-dir",
+                str(data_dir),
+            ]
+        )
+        == 0
+    )
     out = capsys.readouterr().out
     assert "diff" in out.lower()
 
@@ -246,9 +246,7 @@ def test_context_at_diff(saved_trace, capsys):
 def test_context_at_json_is_structured(saved_trace, capsys):
     """`context-at --format json` returns structured data, not markdown wrapped in JSON."""
     trace_id, data_dir = saved_trace
-    assert main(
-        ["context-at", trace_id, "0", "--data-dir", str(data_dir), "--format", "json"]
-    ) == 0
+    assert main(["context-at", trace_id, "0", "--data-dir", str(data_dir), "--format", "json"]) == 0
     out = capsys.readouterr().out
     data = json.loads(out)
     assert "content" not in data
@@ -262,9 +260,7 @@ def test_context_at_json_is_structured(saved_trace, capsys):
 def test_context_at_out_of_range_returns_error(saved_trace, capsys):
     """An out-of-range step returns exit code 1 with a recoverable error."""
     trace_id, data_dir = saved_trace
-    assert main(
-        ["context-at", trace_id, "99", "--data-dir", str(data_dir)]
-    ) == 1
+    assert main(["context-at", trace_id, "99", "--data-dir", str(data_dir)]) == 1
     err = capsys.readouterr().err
     assert "out of range" in err
 
@@ -277,9 +273,7 @@ def test_context_at_out_of_range_returns_error(saved_trace, capsys):
 def test_target_timeline_command(saved_trace, capsys):
     """`target-timeline <trace_id> <target>` finds matching runs."""
     trace_id, data_dir = saved_trace
-    assert main(
-        ["target-timeline", trace_id, "calculator", "--data-dir", str(data_dir)]
-    ) == 0
+    assert main(["target-timeline", trace_id, "calculator", "--data-dir", str(data_dir)]) == 0
     out = capsys.readouterr().out
     assert "Target timeline" in out
     assert "calculator" in out
@@ -288,9 +282,20 @@ def test_target_timeline_command(saved_trace, capsys):
 def test_target_timeline_json_is_structured(saved_trace, capsys):
     """target-timeline --format json returns structured data."""
     trace_id, data_dir = saved_trace
-    assert main(
-        ["target-timeline", trace_id, "calculator", "--data-dir", str(data_dir), "--format", "json"]
-    ) == 0
+    assert (
+        main(
+            [
+                "target-timeline",
+                trace_id,
+                "calculator",
+                "--data-dir",
+                str(data_dir),
+                "--format",
+                "json",
+            ]
+        )
+        == 0
+    )
     out = capsys.readouterr().out
     data = json.loads(out)
     assert "content" not in data
@@ -301,9 +306,7 @@ def test_target_timeline_json_is_structured(saved_trace, capsys):
 def test_error_neighborhood_command_no_errors(saved_trace, capsys):
     """`error-neighborhood` reports cleanly when there are no errors."""
     trace_id, data_dir = saved_trace
-    assert main(
-        ["error-neighborhood", trace_id, "--data-dir", str(data_dir)]
-    ) == 0
+    assert main(["error-neighborhood", trace_id, "--data-dir", str(data_dir)]) == 0
     out = capsys.readouterr().out
     assert "No agent errors" in out
 
@@ -311,9 +314,9 @@ def test_error_neighborhood_command_no_errors(saved_trace, capsys):
 def test_error_neighborhood_json_is_structured(saved_trace, capsys):
     """error-neighborhood --format json returns structured data."""
     trace_id, data_dir = saved_trace
-    assert main(
-        ["error-neighborhood", trace_id, "--data-dir", str(data_dir), "--format", "json"]
-    ) == 0
+    assert (
+        main(["error-neighborhood", trace_id, "--data-dir", str(data_dir), "--format", "json"]) == 0
+    )
     out = capsys.readouterr().out
     data = json.loads(out)
     assert "content" not in data
@@ -339,9 +342,7 @@ def test_context_metrics_command(saved_trace, capsys):
 def test_narrative_json_is_structured(saved_trace, capsys):
     """narrative --format json returns structured data, not markdown wrapped in JSON."""
     trace_id, data_dir = saved_trace
-    assert main(
-        ["narrative", trace_id, "--data-dir", str(data_dir), "--format", "json"]
-    ) == 0
+    assert main(["narrative", trace_id, "--data-dir", str(data_dir), "--format", "json"]) == 0
     out = capsys.readouterr().out
     data = json.loads(out)
     assert "content" not in data
@@ -355,9 +356,7 @@ def test_narrative_json_is_structured(saved_trace, capsys):
 def test_tool_metrics_json_is_structured(saved_trace, capsys):
     """tool-metrics --format json returns structured data, not markdown wrapped in JSON."""
     trace_id, data_dir = saved_trace
-    assert main(
-        ["tool-metrics", trace_id, "--data-dir", str(data_dir), "--format", "json"]
-    ) == 0
+    assert main(["tool-metrics", trace_id, "--data-dir", str(data_dir), "--format", "json"]) == 0
     out = capsys.readouterr().out
     data = json.loads(out)
     assert "content" not in data
@@ -369,9 +368,7 @@ def test_tool_metrics_json_is_structured(saved_trace, capsys):
 def test_context_metrics_json_is_structured(saved_trace, capsys):
     """context-metrics --format json returns structured data, not markdown wrapped in JSON."""
     trace_id, data_dir = saved_trace
-    assert main(
-        ["context-metrics", trace_id, "--data-dir", str(data_dir), "--format", "json"]
-    ) == 0
+    assert main(["context-metrics", trace_id, "--data-dir", str(data_dir), "--format", "json"]) == 0
     out = capsys.readouterr().out
     data = json.loads(out)
     assert "content" not in data
@@ -385,9 +382,7 @@ def test_context_metrics_json_is_structured(saved_trace, capsys):
 def test_skill_metrics_json_is_structured(saved_trace, capsys):
     """skill-metrics --format json returns structured data, not markdown wrapped in JSON."""
     trace_id, data_dir = saved_trace
-    assert main(
-        ["skill-metrics", trace_id, "--data-dir", str(data_dir), "--format", "json"]
-    ) == 0
+    assert main(["skill-metrics", trace_id, "--data-dir", str(data_dir), "--format", "json"]) == 0
     out = capsys.readouterr().out
     data = json.loads(out)
     assert "content" not in data

@@ -254,9 +254,7 @@ def test_trace_to_summary_no_aggregates():
 
 
 def test_trace_to_summary_basic_fields():
-    root = _make_run(
-        run_id="r1", trace_id="t1", name="my-run", run_type="LLM", status="SUCCESS"
-    )
+    root = _make_run(run_id="r1", trace_id="t1", name="my-run", run_type="LLM", status="SUCCESS")
     trace = _MockTrace(root_run=root)
     summary = _trace_to_summary(trace)
     assert summary.id == "r1"
