@@ -6,11 +6,13 @@ SDK-specific objects stop here — nothing downstream imports langsmith.
 
 from __future__ import annotations
 
+import asyncio
 import fnmatch
 import json
 import logging
 import os
 import time
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from self_improve_cli.domain import (
@@ -31,19 +33,45 @@ from self_improve_cli.sources import (
 
 logger = logging.getLogger(__name__)
 
-_LIST_FIELDS = [
-    "id",
-    "trace_id",
-    "name",
-    "run_type",
-    "status",
-    "start_time",
-    "end_time",
-    "error",
-    "total_tokens",
-    "prompt_tokens",
-    "completion_tokens",
+# SmithDB-backed API uses uppercase SCREAMING_SNAKE_CASE selects.
+# Default selects is ["ID"] only — we must explicitly request every field.
+_LIST_SELECTS = [
+    "ID",
+    "TRACE_ID",
+    "NAME",
+    "RUN_TYPE",
+    "STATUS",
+    "START_TIME",
+    "END_TIME",
+    "ERROR",
+    "TOTAL_TOKENS",
+    "PROMPT_TOKENS",
+    "COMPLETION_TOKENS",
 ]
+
+# Full field set for fetch_trace — everything _sdk_run_to_canonical reads.
+_FULL_SELECTS = [
+    "ID",
+    "TRACE_ID",
+    "RUN_TYPE",
+    "NAME",
+    "PARENT_RUN_IDS",
+    "DOTTED_ORDER",
+    "STATUS",
+    "START_TIME",
+    "END_TIME",
+    "TOTAL_TOKENS",
+    "PROMPT_TOKENS",
+    "COMPLETION_TOKENS",
+    "ERROR",
+    "INPUTS",
+    "OUTPUTS",
+]
+
+# traces.query defaults min_start_time to 24h ago, which would silently
+# hide older traces. Use a wide window to preserve the legacy "most recent
+# N regardless of age" behaviour.
+_LIST_MIN_START_DAYS = 90
 
 
 def _get_client(workspace_id: str | None = None) -> Any:
@@ -116,7 +144,9 @@ def _parse_run_type(raw: str | None) -> RunType:
     if raw is None:
         return RunType.OTHER
     try:
-        return RunType(raw)
+        # SmithDB API returns uppercase ("LLM", "TOOL", ...); legacy API
+        # returned lowercase. Our enum values are lowercase, so normalise.
+        return RunType(raw.lower() if isinstance(raw, str) else raw)
     except ValueError:
         return RunType.OTHER
 
@@ -133,6 +163,39 @@ def _sdk_run_to_summary(sdk_run: Any) -> RunSummary:
         total_tokens=sdk_run.total_tokens,
         error=sdk_run.error,
     )
+
+
+def _trace_to_summary(trace: Any) -> RunSummary:
+    """Convert a SmithDB Trace (from traces.query) to a RunSummary.
+
+    traces.query returns Trace objects with root_run + trace_aggregates.
+    total_tokens lives on trace_aggregates, not on root_run.
+    """
+    root = trace.root_run
+    if root is None:
+        raise ValueError("Trace has no root_run")
+    agg = getattr(trace, "trace_aggregates", None)
+    total_tokens = getattr(agg, "total_tokens", None) if agg else None
+    return RunSummary(
+        id=str(root.id),
+        trace_id=str(root.trace_id),
+        name=root.name,
+        run_type=_parse_run_type(getattr(root, "run_type", None)),
+        status=root.status,
+        start_time=str(root.start_time) if root.start_time else None,
+        total_tokens=total_tokens,
+        error=root.error,
+    )
+
+
+def _run_async(coro: Any) -> Any:
+    """Run a coroutine from synchronous context.
+
+    The CLI is fully synchronous. The SmithDB-backed SDK methods are async,
+    so we wrap each call in asyncio.run(). This is safe because the CLI
+    never runs inside an existing event loop.
+    """
+    return asyncio.run(coro)
 
 
 def _sdk_run_to_canonical(sdk_run: Any) -> Run:
@@ -177,7 +240,11 @@ def _sdk_run_to_canonical(sdk_run: Any) -> Run:
             tool_call_id=output_msg_raw["tool_call_id"],
         )
 
-    _pid = run_dict.get("parent_run_id")
+    # SmithDB API replaces parent_run_id (single) with parent_run_ids
+    # (list of all ancestors, root first). The direct parent is the last
+    # element. Fall back to parent_run_id for legacy API compatibility.
+    _parent_ids = run_dict.get("parent_run_ids") or []
+    _pid = _parent_ids[-1] if _parent_ids else run_dict.get("parent_run_id")
     _dotted = run_dict.get("dotted_order")
     return Run(
         id=str(run_dict.get("id", "")),
@@ -207,6 +274,7 @@ def _sdk_run_to_canonical(sdk_run: Any) -> Run:
                 "run_type",
                 "name",
                 "parent_run_id",
+                "parent_run_ids",
                 "dotted_order",
                 "status",
                 "start_time",
@@ -228,6 +296,7 @@ class LangSmithSource(TraceSource):
     def __init__(self, project_name: str | None = None, client: Any | None = None) -> None:
         self._project_name = project_name or _get_project_name()
         self._client = client
+        self._project_id_cache: str | None = None
 
     def _get_client(self) -> Any:
         if self._client is None:
@@ -243,21 +312,49 @@ class LangSmithSource(TraceSource):
         _check_project_allowed(self._project_name)
         return self._project_name
 
+    async def _resolve_project_id_async(self) -> str:
+        """Resolve the configured project name to a SmithDB project UUID.
+
+        SmithDB-backed methods require project_ids (UUIDs), not project
+        names. Caches the result on the instance to avoid repeated lookups.
+        """
+        if self._project_id_cache is not None:
+            return self._project_id_cache
+        project_name = self._resolve_project()
+        client = self._get_client()
+        logger.info("Resolving project UUID for %s", project_name)
+        project = await client.aread_project(project_name=project_name)
+        self._project_id_cache = str(project.id)
+        logger.info("Project %s -> UUID %s", project_name, self._project_id_cache)
+        return self._project_id_cache
+
+    def _resolve_project_id(self) -> str:
+        return _run_async(self._resolve_project_id_async())
+
     def list_root_runs(self, limit: int = 20) -> list[RunSummary]:
         client = self._get_client()
         project = self._resolve_project()
         logger.info("Listing root runs (project=%s, limit=%s)", project, limit)
         start = time.monotonic()
-        runs = list(
-            client.list_runs(
-                project_name=project,
-                is_root=True,
-                limit=limit,
-                select=_LIST_FIELDS,
-            )
-        )
-        logger.info("Found %d root runs in %.2fs", len(runs), time.monotonic() - start)
-        return [_sdk_run_to_summary(r) for r in runs]
+
+        async def _fetch() -> list[Any]:
+            project_id = await self._resolve_project_id_async()
+            min_start = datetime.now(UTC) - timedelta(days=_LIST_MIN_START_DAYS)
+            results: list[Any] = []
+            async for trace in client.traces.query(
+                project_id=project_id,
+                selects=_LIST_SELECTS,
+                min_start_time=min_start,
+                page_size=min(limit, 1000),
+            ):
+                results.append(trace)
+                if len(results) >= limit:
+                    break
+            return results
+
+        traces = _run_async(_fetch())
+        logger.info("Found %d root runs in %.2fs", len(traces), time.monotonic() - start)
+        return [_trace_to_summary(t) for t in traces]
 
     def list_runs_by_type(self, run_type: str, limit: int = 20) -> list[RunSummary]:
         client = self._get_client()
@@ -266,14 +363,24 @@ class LangSmithSource(TraceSource):
             "Listing runs by type (project=%s, run_type=%s, limit=%s)", project, run_type, limit
         )
         start = time.monotonic()
-        runs = list(
-            client.list_runs(
-                project_name=project,
-                run_type=run_type,
-                limit=limit,
-                select=_LIST_FIELDS,
-            )
-        )
+
+        async def _fetch() -> list[Any]:
+            project_id = await self._resolve_project_id_async()
+            min_start = datetime.now(UTC) - timedelta(days=_LIST_MIN_START_DAYS)
+            results: list[Any] = []
+            async for run in client.runs.query(
+                project_ids=[project_id],
+                run_type=run_type.upper(),
+                selects=_LIST_SELECTS,
+                min_start_time=min_start,
+                page_size=min(limit, 1000),
+            ):
+                results.append(run)
+                if len(results) >= limit:
+                    break
+            return results
+
+        runs = _run_async(_fetch())
         logger.info("Found %d %s runs in %.2fs", len(runs), run_type, time.monotonic() - start)
         return [_sdk_run_to_summary(r) for r in runs]
 
@@ -291,13 +398,21 @@ class LangSmithSource(TraceSource):
         client = self._get_client()
         if project_id:
             logger.info("Fetching trace %s (project_id=%s)", trace_id, project_id)
-            query_kwargs: dict[str, Any] = {"project_id": project_id, "trace_id": trace_id}
         else:
             project = self._resolve_project()
             logger.info("Fetching trace %s (project=%s)", trace_id, project)
-            query_kwargs = {"project_name": project, "trace_id": trace_id}
+
+        async def _fetch() -> list[Any]:
+            pid = project_id or await self._resolve_project_id_async()
+            response = await client.traces.list_runs(
+                trace_id=trace_id,
+                project_id=pid,
+                selects=_FULL_SELECTS,
+            )
+            return response.items or []
+
         start = time.monotonic()
-        sdk_runs = list(client.list_runs(**query_kwargs))
+        sdk_runs = _run_async(_fetch())
         sdk_runs.sort(key=lambda r: r.dotted_order or "")
         logger.info(
             "Fetched %d runs for trace %s in %.2fs",
@@ -325,6 +440,12 @@ class LangSmithSource(TraceSource):
         Returns a RunResolution with both the trace_id and the project_id
         (session_id) so the caller can fetch the trace from the correct
         project, even when it differs from the configured default.
+
+        TODO: Migrate to runs.retrieve (SmithDB). The new API requires
+        project_id as input, but this method's purpose is to discover the
+        project_id from a bare run_id — a chicken-and-egg problem. Keep
+        read_run (legacy, deprecated end of July 2026, removed 31 Jan 2027)
+        until a SmithDB API resolves run_id without a known project_id.
         """
         client = self._get_client()
         logger.info("Resolving run %s to trace_id", run_id)

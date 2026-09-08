@@ -138,6 +138,7 @@ governs both.
 | `info` | ✓ | ✓ | n/a | ✓ | ✓ | ✓ structured |
 
 Gaps (deferred or low-impact):
+
 - `compare` still returns markdown-wrapped JSON. Low priority — it's a
   two-trace aggregate, not a drill-down target.
 - `tools` (overview/detail) still returns markdown-wrapped JSON. Low
