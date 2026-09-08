@@ -896,8 +896,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--from-run",
         action="store_true",
         help="Treat the positional argument as a run ID and resolve it to its "
-        "parent trace ID before fetching. Useful when you only have a run ID "
-        "(e.g. from a LangSmith trace URL).",
+        "parent trace ID before fetching. Tries the configured project first "
+        "(SmithDB); falls back to a legacy global lookup if the run is not in "
+        "the configured project. Use --project to target a different project.",
     )
     p.add_argument(
         "--anonymizer",

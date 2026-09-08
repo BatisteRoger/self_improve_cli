@@ -29,7 +29,8 @@ class _MockProject:
 class _MockRun:
     """Mock SDK Run object (pydantic-like)."""
 
-    def __init__(self, **kwargs: Any) -> None:
+    def __init__(self, session_id: str | None = None, **kwargs: Any) -> None:
+        self.session_id = session_id
         for k, v in kwargs.items():
             setattr(self, k, v)
 
@@ -72,13 +73,27 @@ class _AsyncPaginatorMock:
 
 
 class _MockRuns:
-    def __init__(self, runs: list[Any] | None = None):
+    def __init__(
+        self,
+        runs: list[Any] | None = None,
+        retrieve_result: Any | None = None,
+        retrieve_exc: Exception | None = None,
+    ) -> None:
         self._runs = runs or []
         self.query_calls: list[dict] = []
+        self.retrieve_calls: list[dict] = []
+        self._retrieve_result = retrieve_result
+        self._retrieve_exc = retrieve_exc
 
     def query(self, **kwargs: Any) -> _AsyncPaginatorMock:
         self.query_calls.append(kwargs)
         return _AsyncPaginatorMock(list(self._runs))
+
+    async def retrieve(self, run_id: str, *, project_id: str, **kwargs: Any) -> Any:
+        self.retrieve_calls.append({"run_id": run_id, "project_id": project_id, **kwargs})
+        if self._retrieve_exc is not None:
+            raise self._retrieve_exc
+        return self._retrieve_result
 
 
 class _MockTraces:
@@ -101,15 +116,28 @@ class _MockClient:
         traces: list[Any] | None = None,
         runs: list[Any] | None = None,
         project: _MockProject | None = None,
+        retrieve_result: Any | None = None,
+        retrieve_exc: Exception | None = None,
+        read_run_result: Any | None = None,
     ) -> None:
         self.traces = _MockTraces(traces=traces, runs=runs)
-        self.runs = _MockRuns(runs=runs)
+        self.runs = _MockRuns(
+            runs=runs,
+            retrieve_result=retrieve_result,
+            retrieve_exc=retrieve_exc,
+        )
         self._project = project or _MockProject()
+        self._read_run_result = read_run_result
         self.aread_project_calls: list[dict] = []
+        self.read_run_calls: list[dict] = []
 
     async def aread_project(self, project_name: str | None = None, **_kw: Any) -> _MockProject:
         self.aread_project_calls.append({"project_name": project_name})
         return self._project
+
+    def read_run(self, run_id: str) -> Any:
+        self.read_run_calls.append({"run_id": run_id})
+        return self._read_run_result
 
 
 # ---------------------------------------------------------------------------
@@ -369,3 +397,99 @@ def test_project_id_resolution_caches(monkeypatch):
     source.list_root_runs(limit=5)
 
     assert len(client.aread_project_calls) == 1
+
+
+# ---------------------------------------------------------------------------
+# Tests: resolve_trace_id (SmithDB-native + legacy fallback)
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_trace_id_smithdb_native(monkeypatch):
+    """When a project is configured and the run is in it, uses runs.retrieve."""
+    from langsmith import NotFoundError  # noqa: F401 — ensure import works
+
+    retrieve_result = _MockRun(
+        id="run-abc",
+        trace_id="trace-resolved",
+        project_id="proj-uuid-123",
+    )
+    client = _MockClient(retrieve_result=retrieve_result)
+
+    monkeypatch.setenv("LANGSMITH_PROJECT", "test-project")
+    source = LangSmithSource(client=client)
+    resolution = source.resolve_trace_id("run-abc")
+
+    assert resolution.trace_id == "trace-resolved"
+    assert resolution.project_id == "proj-uuid-123"
+    # runs.retrieve was called with the configured project_id
+    assert client.runs.retrieve_calls[0]["run_id"] == "run-abc"
+    assert client.runs.retrieve_calls[0]["project_id"] == "proj-uuid-123"
+    # Legacy read_run was NOT called
+    assert client.read_run_calls == []
+
+
+def test_resolve_trace_id_falls_back_on_not_found(monkeypatch):
+    """When the run is not in the configured project (404), falls back to read_run."""
+    import httpx
+    from langsmith import NotFoundError
+
+    _404 = httpx.Response(404, request=httpx.Request("GET", "https://example.com"))
+    legacy_run = _MockRun(
+        id="run-abc",
+        trace_id="trace-from-legacy",
+        session_id="other-proj-uuid",
+    )
+    client = _MockClient(
+        retrieve_exc=NotFoundError("not found", response=_404, body=None),
+        read_run_result=legacy_run,
+    )
+
+    monkeypatch.setenv("LANGSMITH_PROJECT", "test-project")
+    source = LangSmithSource(client=client)
+    resolution = source.resolve_trace_id("run-abc")
+
+    # Fell back to read_run
+    assert resolution.trace_id == "trace-from-legacy"
+    assert resolution.project_id == "other-proj-uuid"
+    assert len(client.runs.retrieve_calls) == 1
+    assert len(client.read_run_calls) == 1
+
+
+def test_resolve_trace_id_no_project_uses_legacy(monkeypatch):
+    """When no project is configured, uses legacy read_run directly."""
+    legacy_run = _MockRun(
+        id="run-abc",
+        trace_id="trace-legacy",
+        session_id="some-proj-uuid",
+    )
+    client = _MockClient(read_run_result=legacy_run)
+
+    monkeypatch.delenv("LANGSMITH_PROJECT", raising=False)
+    monkeypatch.delenv("LANGCHAIN_PROJECT", raising=False)
+    source = LangSmithSource(client=client)
+    resolution = source.resolve_trace_id("run-abc")
+
+    assert resolution.trace_id == "trace-legacy"
+    # runs.retrieve was NOT attempted (no project to try)
+    assert client.runs.retrieve_calls == []
+    assert len(client.read_run_calls) == 1
+
+
+def test_resolve_trace_id_non_404_error_propagates(monkeypatch):
+    """Non-404 errors from runs.retrieve propagate (no legacy fallback)."""
+
+    # APIStatusError requires a response object; use a plain RuntimeError
+    # to verify non-NotFoundError exceptions are not swallowed.
+    client = _MockClient(retrieve_exc=RuntimeError("network error"))
+
+    monkeypatch.setenv("LANGSMITH_PROJECT", "test-project")
+    source = LangSmithSource(client=client)
+
+    try:
+        source.resolve_trace_id("run-abc")
+        raise AssertionError("Expected RuntimeError to propagate")
+    except RuntimeError:
+        pass  # Expected — non-404 errors should not trigger fallback
+
+    # read_run was NOT called (error propagated before fallback)
+    assert client.read_run_calls == []

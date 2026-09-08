@@ -432,23 +432,75 @@ class LangSmithSource(TraceSource):
     def resolve_trace_id(self, run_id: str) -> RunResolution:
         """Resolve a run ID to its parent trace ID and project.
 
-        Uses the LangSmith SDK's read_run to fetch the run metadata and
-        extract its trace_id and session_id (the project UUID). This is
-        useful when the user only has a run ID (e.g. from a LangSmith trace
-        URL) and needs the trace ID to fetch the full trace.
+        Tries the SmithDB-native path first: runs.retrieve with the
+        configured project. If the run is not in the configured project
+        (NotFoundError) or no project is configured, falls back to the
+        legacy read_run global lookup.
 
-        Returns a RunResolution with both the trace_id and the project_id
-        (session_id) so the caller can fetch the trace from the correct
-        project, even when it differs from the configured default.
-
-        TODO: Migrate to runs.retrieve (SmithDB). The new API requires
-        project_id as input, but this method's purpose is to discover the
-        project_id from a bare run_id — a chicken-and-egg problem. Keep
-        read_run (legacy, deprecated end of July 2026, removed 31 Jan 2027)
-        until a SmithDB API resolves run_id without a known project_id.
+        The legacy fallback is deprecated (removed 31 Jan 2027). To use
+        the SmithDB-native path for cross-project runs, specify the
+        project with --project <name>.
         """
+        from langsmith import NotFoundError  # type: ignore[import-not-found]
+
         client = self._get_client()
-        logger.info("Resolving run %s to trace_id", run_id)
+        project_name = self._project_name or _get_project_name()
+
+        # SmithDB-native path: try the configured project first.
+        if project_name:
+            _check_project_allowed(project_name)
+            project_id = self._resolve_project_id()
+            try:
+                return self._resolve_trace_id_via_runs_retrieve(client, run_id, project_id)
+            except NotFoundError:
+                logger.warning(
+                    "Run %s not found in configured project '%s'. "
+                    "Falling back to legacy read_run (deprecated, removed 31 Jan 2027). "
+                    "If the run lives in another project, use --project <name>.",
+                    run_id,
+                    project_name,
+                )
+        else:
+            logger.warning(
+                "No project configured — using legacy read_run for run %s "
+                "(deprecated, removed 31 Jan 2027). "
+                "Set LANGSMITH_PROJECT or use --project to use the SmithDB-native path.",
+                run_id,
+            )
+
+        # Legacy fallback (deprecated, removed 31 Jan 2027).
+        return self._resolve_trace_id_via_read_run(client, run_id)
+
+    def _resolve_trace_id_via_runs_retrieve(
+        self, client: Any, run_id: str, project_id: str
+    ) -> RunResolution:
+        """SmithDB-native: resolve via runs.retrieve (requires project_id)."""
+
+        async def _do() -> RunResolution:
+            sdk_run = await client.runs.retrieve(
+                run_id=run_id,
+                project_id=project_id,
+                selects=["ID", "TRACE_ID", "PROJECT_ID"],
+            )
+            trace_id = str(sdk_run.trace_id)
+            pid = getattr(sdk_run, "project_id", None) or project_id
+            return RunResolution(trace_id=trace_id, project_id=str(pid))
+
+        logger.info("Resolving run %s via runs.retrieve (project_id=%s)", run_id, project_id)
+        start = time.monotonic()
+        result = _run_async(_do())
+        logger.info(
+            "Resolved run %s -> trace_id %s (project_id=%s) in %.2fs",
+            run_id,
+            result.trace_id,
+            result.project_id,
+            time.monotonic() - start,
+        )
+        return result
+
+    def _resolve_trace_id_via_read_run(self, client: Any, run_id: str) -> RunResolution:
+        """Legacy fallback: resolve via read_run (deprecated, removed 31 Jan 2027)."""
+        logger.info("Resolving run %s via legacy read_run", run_id)
         start = time.monotonic()
         sdk_run = client.read_run(run_id)
         trace_id = str(sdk_run.trace_id)
