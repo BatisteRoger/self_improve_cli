@@ -21,6 +21,7 @@ from typing import Any
 from dotenv import load_dotenv
 
 from self_improve_cli.cli.logging_setup import setup_logging
+from self_improve_cli.domain import Assessment, OutcomeSource, OutcomeStatus
 from self_improve_cli.privacy import AnonymizerBackend, anonymize_trace, is_presidio_available
 from self_improve_cli.representations import (
     build_narrative,
@@ -331,12 +332,28 @@ def _cmd_fetch(args: argparse.Namespace) -> int:
 def _cmd_skeleton(args: argparse.Namespace) -> int:
     store = _get_store(args)
     trace = store.load_trace(args.trace_id)
+    assessment = store.load_assessment(args.trace_id)
     if args.format == "json":
         from self_improve_cli.representations import skeleton_data
 
-        _output(skeleton_data(trace.runs), args)
+        data = skeleton_data(trace.runs)
+        if assessment:
+            data["assessment"] = {
+                "task": assessment.task,
+                "outcome": assessment.outcome.value,
+                "outcome_source": assessment.outcome_source.value,
+                "notes": assessment.notes,
+                "assessed_at": assessment.assessed_at,
+            }
+        _output(data, args)
     else:
         content = build_skeleton(trace.runs)
+        if assessment:
+            header = (
+                f"**Assessment: {assessment.outcome.value} "
+                f"({assessment.outcome_source.value})** — {assessment.task}\n\n"
+            )
+            content = header + content
         _output(content, args)
     return EXIT_OK
 
@@ -594,13 +611,97 @@ def _cmd_info(args: argparse.Namespace) -> int:
     """Show info about a saved trace (sanitization status, stats)."""
     store = _get_store(args)
     trace = store.load_trace(args.trace_id)
-    result = {
+    result: dict[str, Any] = {
         "trace_id": trace.trace_id,
         "sanitized": trace.sanitized,
         "sanitization_report": trace.sanitization_report,
         "source": trace.source,
         "schema_version": trace.schema_version,
         "run_count": len(trace.runs),
+    }
+    assessment = store.load_assessment(args.trace_id)
+    if assessment:
+        result["assessment"] = {
+            "task": assessment.task,
+            "outcome": assessment.outcome.value,
+            "outcome_source": assessment.outcome_source.value,
+            "notes": assessment.notes,
+            "assessed_at": assessment.assessed_at,
+        }
+    _output(result, args)
+    return EXIT_OK
+
+
+def _cmd_assess(args: argparse.Namespace) -> int:
+    """Set, show, or clear a manual task & outcome assessment for a trace."""
+    store = _get_store(args)
+
+    if args.clear:
+        if store.clear_assessment(args.trace_id):
+            print(f"Cleared assessment for trace {args.trace_id}", file=sys.stderr)
+        else:
+            print(f"No assessment found for trace {args.trace_id}", file=sys.stderr)
+        return EXIT_OK
+
+    # If no set-mode flags provided, show the current assessment.
+    set_mode = args.task or args.outcome or args.source or args.notes is not None
+    if not set_mode:
+        assessment = store.load_assessment(args.trace_id)
+        if assessment is None:
+            print(
+                f"No assessment set for trace {args.trace_id}. "
+                "Use --task and --outcome to set one.",
+                file=sys.stderr,
+            )
+            return EXIT_ERROR
+        result = {
+            "trace_id": assessment.trace_id,
+            "task": assessment.task,
+            "outcome": assessment.outcome.value,
+            "outcome_source": assessment.outcome_source.value,
+            "notes": assessment.notes,
+            "assessed_at": assessment.assessed_at,
+        }
+        _output(result, args)
+        return EXIT_OK
+
+    # Set or update the assessment.
+    existing = store.load_assessment(args.trace_id)
+    task = args.task if args.task else (existing.task if existing else "")
+    if not task:
+        print("Error: --task is required when setting an assessment.", file=sys.stderr)
+        return EXIT_USAGE
+
+    outcome = (
+        OutcomeStatus(args.outcome)
+        if args.outcome
+        else (existing.outcome if existing else OutcomeStatus.UNKNOWN)
+    )
+    source = (
+        OutcomeSource(args.source)
+        if args.source
+        else (existing.outcome_source if existing else OutcomeSource.UNKNOWN)
+    )
+    notes = args.notes if args.notes is not None else (existing.notes if existing else "")
+
+    from datetime import UTC, datetime
+
+    assessment = Assessment(
+        trace_id=args.trace_id,
+        task=task,
+        outcome=outcome,
+        outcome_source=source,
+        notes=notes,
+        assessed_at=datetime.now(UTC).isoformat(),
+    )
+    store.save_assessment(assessment)
+    result = {
+        "trace_id": assessment.trace_id,
+        "task": assessment.task,
+        "outcome": assessment.outcome.value,
+        "outcome_source": assessment.outcome_source.value,
+        "notes": assessment.notes,
+        "assessed_at": assessment.assessed_at,
     }
     _output(result, args)
     return EXIT_OK
@@ -1065,6 +1166,42 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("trace_id")
     add_common_opts(p)
     p.set_defaults(func=_cmd_info)
+
+    # assess
+    p = sub.add_parser(
+        "assess",
+        help="Set or show a manual task & outcome assessment for a trace",
+    )
+    p.add_argument("trace_id")
+    p.add_argument(
+        "--task",
+        default=None,
+        help="What the agent was asked to accomplish (required when setting)",
+    )
+    p.add_argument(
+        "--outcome",
+        choices=["success", "partial", "fail", "unknown"],
+        default=None,
+        help="Outcome status (required when setting)",
+    )
+    p.add_argument(
+        "--source",
+        choices=["human", "test", "evaluator", "unknown"],
+        default=None,
+        help="Who or what determined the outcome (default: unknown)",
+    )
+    p.add_argument(
+        "--notes",
+        default=None,
+        help="Free-form notes: what was produced, verified, or remains unknown",
+    )
+    p.add_argument(
+        "--clear",
+        action="store_true",
+        help="Remove the assessment for this trace",
+    )
+    add_common_opts(p)
+    p.set_defaults(func=_cmd_assess)
 
     # skill
     p = sub.add_parser("skill", help="List available skills or print a specific skill")

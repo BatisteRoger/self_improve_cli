@@ -6,6 +6,7 @@ explicit opt-in and is always local-only, never sent elsewhere.
 Data layout (all under a configurable data root, gitignored):
 - data/traces/<trace_id>/sanitized.json   — anonymized canonical trace
 - data/traces/<trace_id>/raw.json         — raw trace (only if keep_raw=True)
+- data/traces/<trace_id>/assessment.json  — manual task & outcome assessment
 - data/ter/<trace_id>/                    — derived representations
 - data/evaluations/<trace_id>/            — evaluations (versioned knowledge)
 """
@@ -19,7 +20,16 @@ from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any
 
-from self_improve_cli.domain import Message, Run, RunType, ToolCall, Trace
+from self_improve_cli.domain import (
+    Assessment,
+    Message,
+    OutcomeSource,
+    OutcomeStatus,
+    Run,
+    RunType,
+    ToolCall,
+    Trace,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -220,6 +230,45 @@ class TraceStore:
         """Return True if a saved trace (sanitized or raw) exists."""
         trace_dir = self._trace_dir(trace_id)
         return (trace_dir / "sanitized.json").exists() or (trace_dir / "raw.json").exists()
+
+    # -- Assessment storage ----------------------------------------------
+
+    def save_assessment(self, assessment: Assessment) -> Path:
+        """Persist a manual assessment as JSON alongside the trace."""
+        trace_dir = self._trace_dir(assessment.trace_id)
+        trace_dir.mkdir(parents=True, exist_ok=True)
+        path = trace_dir / "assessment.json"
+        payload = _dataclass_to_dict(assessment)
+        path.write_text(
+            json.dumps(payload, indent=2, default=str, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        logger.info("Saved assessment for trace %s to %s", assessment.trace_id, path)
+        return path
+
+    def load_assessment(self, trace_id: str) -> Assessment | None:
+        """Load a saved assessment, or None if it doesn't exist."""
+        path = self._trace_dir(trace_id) / "assessment.json"
+        if not path.exists():
+            return None
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return Assessment(
+            trace_id=data["trace_id"],
+            task=data.get("task", ""),
+            outcome=OutcomeStatus(data.get("outcome", "unknown")),
+            outcome_source=OutcomeSource(data.get("outcome_source", "unknown")),
+            notes=data.get("notes", ""),
+            assessed_at=data.get("assessed_at", ""),
+        )
+
+    def clear_assessment(self, trace_id: str) -> bool:
+        """Remove a saved assessment. Returns True if it existed."""
+        path = self._trace_dir(trace_id) / "assessment.json"
+        if path.exists():
+            path.unlink()
+            logger.info("Cleared assessment for trace %s", trace_id)
+            return True
+        return False
 
     def save_ter_file(self, trace_id: str, filename: str, content: str) -> Path:
         """Write a derived representation file."""

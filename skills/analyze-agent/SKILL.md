@@ -23,6 +23,21 @@ self-improve ati show <agent_name>
 Architecture context turns "the agent called search 7 times" into "the agent's
 retrieval strategy is inefficient because it doesn't consolidate results."
 
+## Step 0: Check the assessment (if set)
+
+```bash
+self-improve assess <trace_id>
+```
+
+If an assessment exists, it tells you what the agent was asked to do and
+whether it succeeded. This context changes how you interpret everything
+else — seven searches might be wasteful or necessary depending on the task
+and its outcome. The skeleton also shows the assessment as a header line
+when present.
+
+If no assessment exists, proceed without it — but consider setting one
+before drawing conclusions about efficiency.
+
 ## Step 1: Read the skeleton (L1)
 
 ```bash

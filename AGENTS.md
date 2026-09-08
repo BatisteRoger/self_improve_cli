@@ -195,6 +195,40 @@ self-improve fetch <run_id> --from-run --project <project_name>
 The resolution is logged to stderr, and the JSON output includes a
 `resolved_from_run` field so you can trace back which run ID was used.
 
+### Task & outcome assessment
+
+Before judging efficiency, the analyst needs to establish what the agent was
+asked to do and whether it succeeded. Use `assess` to attach a manual
+assessment to a stored trace:
+
+```bash
+self-improve assess <trace_id> --task "Fix the login bug" --outcome success --source human --notes "All tests pass."
+```
+
+- `--outcome`: `success` | `partial` | `fail` | `unknown`
+- `--source`: `human` | `test` | `evaluator` | `unknown`
+- `--notes`: free-form notes about what was produced, verified, or remains unknown
+
+Show the current assessment:
+
+```bash
+self-improve assess <trace_id>
+```
+
+Clear it:
+
+```bash
+self-improve assess <trace_id> --clear
+```
+
+When an assessment exists, `skeleton` shows it as a header line and `info`
+includes it in the JSON output. This gives the analyst outcome context
+before interpreting metrics — seven searches might be wasteful or necessary
+depending on the task and its outcome.
+
+"No verification is visible in this trace" is different from "the change is
+incorrect." Keep unknown outcomes explicitly unknown.
+
 ### Anonymizer backend
 
 The `fetch` command anonymizes traces before persistence. Two backends are

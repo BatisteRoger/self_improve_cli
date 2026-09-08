@@ -147,3 +147,39 @@ class ProjectSummary:
     id: str
     name: str
     run_count: int | None = None
+
+
+class OutcomeStatus(StrEnum):
+    """Outcome of an agent execution, as assessed by the analyst or engineer."""
+
+    SUCCESS = "success"
+    PARTIAL = "partial"
+    FAIL = "fail"
+    UNKNOWN = "unknown"
+
+
+class OutcomeSource(StrEnum):
+    """Who or what determined the outcome."""
+
+    HUMAN = "human"
+    TEST = "test"
+    EVALUATOR = "evaluator"
+    UNKNOWN = "unknown"
+
+
+@dataclass
+class Assessment:
+    """Manual assessment of what an agent was asked to do and whether it succeeded.
+
+    Stored alongside the trace as metadata. The assessment is cited and
+    subjective — it records the analyst's or engineer's judgment, not a
+    computed metric. "No verification is visible" is different from "the
+    result is incorrect" — keep unknown outcomes explicitly unknown.
+    """
+
+    trace_id: str
+    task: str
+    outcome: OutcomeStatus = OutcomeStatus.UNKNOWN
+    outcome_source: OutcomeSource = OutcomeSource.UNKNOWN
+    notes: str = ""
+    assessed_at: str = ""

@@ -26,7 +26,8 @@ a template.
 
 | Question | Start with | Next step only if insufficient |
 |----------|-----------|--------------------------------|
-| "What happened in this trace?" | `skeleton` | `narrative` for the relevant section |
+| "What happened in this trace?" | `skeleton` (shows assessment header if set) | `narrative` for the relevant section |
+| "What was the agent asked to do, and did it succeed?" | `assess <trace_id>` (show) | `skeleton` for run-level evidence |
 | "Why did this tool call fail?" | `run-detail` on the tool run | `context-at` for the next model input |
 | "Did the model receive that tool result/error?" | `context-at` for the step | `run-detail` on the surrounding runs |
 | "Why did it read this file 4 times?" | `tool-metrics` | `target-timeline <trace_id> <file>` then `run-detail` on each touch |
