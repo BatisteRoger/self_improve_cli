@@ -38,10 +38,6 @@ a template.
 | "Did the agent recover from that error?" | `error-neighborhood` | `run-detail` on the error and the next step |
 | "What should I inspect next?" | The signal you already have (a metric, a run ID) | A specific run reference, not a generic checklist |
 
-Commands marked "when available" are part of the Wave 1 contract and may
-not yet be released. If a command is missing, fall back to the listed
-alternative and note that the cheaper view was unavailable.
-
 ## Stopping rules
 
 Stop investigating when any of these is true:

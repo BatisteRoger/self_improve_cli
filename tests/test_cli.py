@@ -1,6 +1,8 @@
 """Tests for the CLI (offline, no network)."""
 
+import io
 import json
+import sys
 
 import pytest
 
@@ -365,6 +367,28 @@ def test_context_at_out_of_range_returns_error(saved_trace, capsys):
     assert main(["context-at", trace_id, "99", "--data-dir", str(data_dir)]) == 1
     err = capsys.readouterr().err
     assert "out of range" in err
+
+
+def test_context_at_from_without_to_returns_usage_error(saved_trace, capsys):
+    """`--from` without `--to` returns exit code 2 (usage error), not silent fallback."""
+    trace_id, data_dir = saved_trace
+    assert (
+        main(["context-at", trace_id, "0", "--from", "0", "--data-dir", str(data_dir)])
+        == 2  # EXIT_USAGE
+    )
+    err = capsys.readouterr().err
+    assert "--from and --to must be used together" in err
+
+
+def test_context_at_to_without_from_returns_usage_error(saved_trace, capsys):
+    """`--to` without `--from` returns exit code 2 (usage error)."""
+    trace_id, data_dir = saved_trace
+    assert (
+        main(["context-at", trace_id, "0", "--to", "1", "--data-dir", str(data_dir)])
+        == 2  # EXIT_USAGE
+    )
+    err = capsys.readouterr().err
+    assert "--from and --to must be used together" in err
 
 
 # ---------------------------------------------------------------------------
@@ -955,3 +979,41 @@ def test_list_projects_json_format(tmp_path, capsys, monkeypatch):
     out = capsys.readouterr().out
     data = json.loads(out)
     assert data == [{"id": "uuid-1", "name": "my-agent-dev", "run_count": 42}]
+
+
+# ---------------------------------------------------------------------------
+# UTF-8 stdout/stderr reconfiguration (SLN-40)
+# ---------------------------------------------------------------------------
+
+
+def test_ensure_utf8_stdout_skips_streams_without_reconfigure():
+    """_ensure_utf8_stdout must not crash on streams without reconfigure (StringIO)."""
+    from self_improve_cli.cli.main import _ensure_utf8_stdout
+
+    original_stdout, original_stderr = sys.stdout, sys.stderr
+    sys.stdout = io.StringIO()
+    sys.stderr = io.StringIO()
+    try:
+        _ensure_utf8_stdout()  # Must not crash — StringIO has no reconfigure.
+    finally:
+        sys.stdout = original_stdout
+        sys.stderr = original_stderr
+
+
+def test_ensure_utf8_stdout_swallows_reconfigure_errors():
+    """_ensure_utf8_stdout must not crash if reconfigure raises ValueError."""
+
+    class _BadStream:
+        def reconfigure(self, **_kwargs):
+            raise ValueError("not supported")
+
+    from self_improve_cli.cli.main import _ensure_utf8_stdout
+
+    original_stdout, original_stderr = sys.stdout, sys.stderr
+    sys.stdout = _BadStream()  # type: ignore[assignment]
+    sys.stderr = _BadStream()  # type: ignore[assignment]
+    try:
+        _ensure_utf8_stdout()  # Must not crash — ValueError is swallowed.
+    finally:
+        sys.stdout = original_stdout
+        sys.stderr = original_stderr

@@ -213,3 +213,54 @@ def test_skill_check_expected_none_mismatch(two_traces, capsys):
     out = capsys.readouterr().out
     assert "❌" in out
     assert "false positive" in out
+
+
+def test_skill_check_json_match(two_traces, capsys):
+    """skill-check --format json returns structured JSON on match."""
+    _, trace_b, data_dir = two_traces
+    assert (
+        main(
+            [
+                "skill-check",
+                trace_b,
+                "--expected",
+                "priorisation-financiere",
+                "--data-dir",
+                str(data_dir),
+                "--format",
+                "json",
+            ]
+        )
+        == 0
+    )
+    out = capsys.readouterr().out
+    data = json.loads(out)
+    assert data["expected"] == "priorisation-financiere"
+    assert data["observed"] == ["priorisation-financiere"]
+    assert data["match"] is True
+    assert data["false_positive"] is None
+
+
+def test_skill_check_json_mismatch(two_traces, capsys):
+    """skill-check --format json returns structured JSON on mismatch."""
+    _, trace_b, data_dir = two_traces
+    assert (
+        main(
+            [
+                "skill-check",
+                trace_b,
+                "--expected",
+                "reaction-baisse-marche",
+                "--data-dir",
+                str(data_dir),
+                "--format",
+                "json",
+            ]
+        )
+        == 1
+    )
+    out = capsys.readouterr().out
+    data = json.loads(out)
+    assert data["match"] is False
+    assert "false_positive" in data
+    assert data["false_positive"] is not None

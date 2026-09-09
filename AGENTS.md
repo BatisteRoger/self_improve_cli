@@ -121,28 +121,32 @@ governs both.
    parse prose to recover identifiers already known to the CLI. Useful next
    actions should be grounded in available data — not generated diagnoses.
 
-### Command audit (as of Wave 2)
+### Command audit (as of Wave 3)
 
 | Command | Predictable | Bounded | Connected | Honest | Recoverable | Composable (JSON) |
 |---------|:-:|:-:|:-:|:-:|:-:|:-:|
 | `skeleton` | ✓ | ✓ | run IDs | ✓ | ✓ | ✓ structured |
 | `narrative` | ✓ | ✓ truncation, `--from/--to/--around-step` | run IDs per step | ✓ | n/a | ✓ structured |
 | `run-detail` | ✓ | ✓ `--tool-calls-only` | parent/child refs | ✓ | ✓ suggests skeleton | ✓ structured |
-| `context-at` | ✓ step index | ✓ bounded preview, `--inputs-only/--outputs-only` | prev/next step, run-detail | ✓ inferred labels | ✓ lists valid steps | ✓ structured |
+| `context-at` | ✓ step index | ✓ bounded preview, `--inputs-only/--outputs-only`, `--tool <id>`, `--full` | prev/next step, run-detail | ✓ inferred labels | ✓ lists valid steps, enforces `--from/--to` pairing | ✓ structured |
 | `target-timeline` | ✓ | ✓ truncation markers | run IDs per touch | ✓ | ✓ reports no matches | ✓ structured |
 | `error-neighborhood` | ✓ | ✓ window-bounded | run IDs, next step | ✓ excludes infra-cancelled | n/a | ✓ structured |
 | `tool-metrics` | ✓ | ✓ | n/a (aggregate) | ✓ approximate labels | n/a | ✓ structured |
 | `context-metrics` | ✓ | ✓ | step indices | ✓ approximate labels | n/a | ✓ structured |
 | `skill-metrics` | ✓ | ✓ | step indices | ✓ approximate labels | n/a | ✓ structured |
-| `compare` | ✓ | ✓ | trace IDs | ✓ | n/a | markdown-wrapped |
-| `info` | ✓ | ✓ | n/a | ✓ | ✓ | ✓ structured |
+| `tools` | ✓ | ✓ `--detail` | tool names | ✓ | n/a | markdown-wrapped (tabular) |
+| `compare` | ✓ | ✓ | trace IDs | ✓ | n/a | ✓ structured |
+| `skill-check` | ✓ | ✓ | n/a | ✓ | ✓ suggests skill-metrics | ✓ structured |
+| `assess` | ✓ | ✓ | n/a | ✓ | ✓ suggests `--task` | JSON in both formats |
+| `info` | ✓ | ✓ | n/a | ✓ | ✓ | JSON in both formats |
 
 Gaps (deferred or low-impact):
 
-- `compare` still returns markdown-wrapped JSON. Low priority — it's a
-  two-trace aggregate, not a drill-down target.
 - `tools` (overview/detail) still returns markdown-wrapped JSON. Low
   priority — the matrix is inherently tabular.
+- `assess` and `info` output pretty-printed JSON in both `--format markdown`
+  and `--format json` modes (no human-readable markdown representation).
+  By design — these are structured metadata, not narrative content.
 
 ### Merge checklist for new commands
 
@@ -329,3 +333,4 @@ databases. See `cli/doctor.py` for the full check list and scope honesty notes.
 - Run the relevant formatter, linter, type checker, and tests before declaring a change complete. Specifically: `uv run pytest`, `uv run ruff check src tests`, `uv run ruff format --check src tests`, and `uv run pyright src`.
 - Keep changes focused and reviewable; do not rewrite unrelated files.
 - Label heuristic metrics as approximate in their output and docstrings.
+- Use as few special characters as practical in authored CLI output and documentation. Special characters may still arrive through user conversations or trace content and must be handled robustly — never crash on an unencodable code point.

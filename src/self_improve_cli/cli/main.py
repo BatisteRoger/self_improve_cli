@@ -40,10 +40,28 @@ from self_improve_cli.representations import (
 from self_improve_cli.storage import TraceStore
 
 # Force UTF-8 on stdout/stderr for cross-platform Unicode support.
-# Without this, Windows cp1252 crashes on characters like ->, e-acute in trace content.
-for _stream in (sys.stdout, sys.stderr):
-    if hasattr(_stream, "reconfigure"):
-        _stream.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
+# Without this, Windows cp1252 crashes on characters like →, —, é in
+# authored CLI output (run-detail, context-at, target-timeline) and in
+# trace content surfaced by analysis commands. See SLN-40.
+
+
+def _ensure_utf8_stdout() -> None:
+    """Reconfigure stdout/stderr to UTF-8 if the default encoding cannot handle Unicode.
+
+    Best-effort: streams without ``reconfigure`` (e.g. StringIO in tests,
+    captured streams) are skipped silently. A reconfigure that raises is
+    swallowed so the CLI never crashes at startup over an encoding fix.
+    """
+    for _stream in (sys.stdout, sys.stderr):
+        if not hasattr(_stream, "reconfigure"):
+            continue
+        try:
+            _stream.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
+        except (ValueError, OSError):
+            pass  # Best effort: some streams may not allow reconfiguration.
+
+
+_ensure_utf8_stdout()
 
 EPILOG = (
     "Privacy: traces are anonymized on fetch by default. "
@@ -504,22 +522,34 @@ def _cmd_skill_check(args: argparse.Namespace) -> int:
 
     if expected == "none":
         match = len(observed) == 0
-        observed_str = ", ".join(observed) if observed else "none"
     else:
         match = expected in observed
-        observed_str = ", ".join(observed) if observed else "none"
 
-    status = "✅" if match else "❌"
-    lines = [
-        f"Expected: {expected}",
-        f"Observed: {observed_str}  {status}",
-    ]
+    false_positive: str | None = None
     if not match and expected != "none" and observed:
-        lines.append(f"(false positive: {observed_str} triggered instead of {expected})")
+        false_positive = f"{', '.join(observed)} triggered instead of {expected}"
     elif not match and expected == "none":
-        lines.append("(false positive: skill triggered when none was expected)")
+        false_positive = "skill triggered when none was expected"
 
-    print("\n".join(lines))
+    if args.format == "json":
+        result = {
+            "trace_id": args.trace_id,
+            "expected": expected,
+            "observed": observed,
+            "match": match,
+            "false_positive": false_positive,
+        }
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        observed_str = ", ".join(observed) if observed else "none"
+        status = "✅" if match else "❌"
+        lines = [
+            f"Expected: {expected}",
+            f"Observed: {observed_str}  {status}",
+        ]
+        if false_positive:
+            lines.append(f"(false positive: {false_positive})")
+        print("\n".join(lines))
     return EXIT_OK if match else EXIT_ERROR
 
 
@@ -560,6 +590,15 @@ def _cmd_context_at(args: argparse.Namespace) -> int:
     inputs_only = getattr(args, "inputs_only", False)
     outputs_only = getattr(args, "outputs_only", False)
     full = getattr(args, "full", False)
+
+    # Enforce --from/--to pairing: both or neither (Recoverable contract).
+    if (from_step is None) != (to_step is None):
+        missing = "--to" if from_step is not None else "--from"
+        print(
+            f"Error: --from and --to must be used together. Missing {missing}.",
+            file=sys.stderr,
+        )
+        return EXIT_USAGE
 
     if args.format == "json":
         data = context_at_data(
@@ -913,7 +952,16 @@ def _cmd_prompt_diff(args: argparse.Namespace) -> int:
         tofile=f"{args.trace_id} (trace)",
     )
     diff_text = "".join(diff)
-    if not diff_text:
+    if args.format == "json":
+        result = {
+            "prompt_name": args.name,
+            "tag": tag,
+            "trace_id": args.trace_id,
+            "has_differences": bool(diff_text),
+            "diff": diff_text,
+        }
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    elif not diff_text:
         print(f"No differences found between {args.name}:{tag} and the trace's system prompt.")
     else:
         print("Approximate diff (traces may have runtime substitutions):\n")
@@ -1085,7 +1133,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=_cmd_skill_metrics)
 
     # compare
-    p = sub.add_parser("compare", help="Compare two traces: tokens, latency, skills")
+    p = sub.add_parser("compare", help="Comparison: diff two traces (tokens, latency, skills)")
     p.add_argument("trace_a")
     p.add_argument("trace_b")
     add_common_opts(p)
@@ -1094,7 +1142,7 @@ def build_parser() -> argparse.ArgumentParser:
     # skill-check
     p = sub.add_parser(
         "skill-check",
-        help="Check if the expected skill was triggered (exit 0=match, 1=mismatch)",
+        help="Verification: check if the expected skill was triggered (exit 0=match, 1=mismatch)",
     )
     p.add_argument("trace_id")
     p.add_argument(
@@ -1216,7 +1264,7 @@ def build_parser() -> argparse.ArgumentParser:
     # assess
     p = sub.add_parser(
         "assess",
-        help="Set or show a manual task & outcome assessment for a trace",
+        help="Assessment: set or show a manual task & outcome assessment for a trace",
     )
     p.add_argument("trace_id")
     p.add_argument(
@@ -1276,7 +1324,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip checks requiring Docker, databases, or network (no-op for this "
         "project — all checks are already local-only)",
     )
-    add_common_opts(p)
+    p.add_argument(
+        "--format",
+        choices=["markdown", "json"],
+        default="markdown",
+        help="Output format (default: markdown)",
+    )
     p.set_defaults(func=_cmd_doctor)
 
     # prompt
