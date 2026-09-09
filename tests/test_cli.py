@@ -132,11 +132,104 @@ def test_narrative_command(saved_trace, capsys):
     assert "2+2 = 4." in out
 
 
+def test_narrative_from_step_filter(saved_trace, capsys):
+    """narrative --from N excludes early steps but keeps the header."""
+    trace_id, data_dir = saved_trace
+    assert main(["narrative", trace_id, "--data-dir", str(data_dir), "--from", "2"]) == 0
+    out = capsys.readouterr().out
+    assert "## Task" in out
+    assert "showing steps 2-" in out
+    assert "## Step 1 —" not in out
+
+
+def test_narrative_to_step_filter(saved_trace, capsys):
+    """narrative --to N excludes late steps."""
+    trace_id, data_dir = saved_trace
+    assert main(["narrative", trace_id, "--data-dir", str(data_dir), "--to", "1"]) == 0
+    out = capsys.readouterr().out
+    assert "## Step 1 —" in out
+    assert "## Step 2 —" not in out
+
+
+def test_narrative_around_step(saved_trace, capsys):
+    """narrative --around-step N shows N-1 to N+1."""
+    trace_id, data_dir = saved_trace
+    assert main(["narrative", trace_id, "--data-dir", str(data_dir), "--around-step", "2"]) == 0
+    out = capsys.readouterr().out
+    assert "## Step 1 —" in out
+    assert "## Step 2 —" in out
+    assert "## Step 3 —" in out
+
+
+def test_narrative_json_step_range(saved_trace, capsys):
+    """narrative --format json --from N returns filtered steps with range metadata."""
+    trace_id, data_dir = saved_trace
+    assert (
+        main(
+            [
+                "narrative",
+                trace_id,
+                "--data-dir",
+                str(data_dir),
+                "--format",
+                "json",
+                "--from",
+                "2",
+            ]
+        )
+        == 0
+    )
+    out = capsys.readouterr().out
+    data = json.loads(out)
+    assert "step_range" in data
+    assert data["step_range"]["from"] == 2
+    assert all(s["step"] >= 2 for s in data["steps"])
+
+
 def test_run_detail_command(saved_trace, capsys):
     trace_id, data_dir = saved_trace
     assert main(["run-detail", trace_id, "run-llm-2", "--data-dir", str(data_dir)]) == 0
     out = capsys.readouterr().out
     assert "You are a helpful agent." in out
+
+
+def test_run_detail_tool_calls_only(saved_trace, capsys):
+    """`--tool-calls-only` shows tool calls without prompts."""
+    trace_id, data_dir = saved_trace
+    assert (
+        main(
+            ["run-detail", trace_id, "run-llm-1", "--tool-calls-only", "--data-dir", str(data_dir)]
+        )
+        == 0
+    )
+    out = capsys.readouterr().out
+    assert "calculator" in out
+    assert "## Input messages" not in out
+
+
+def test_run_detail_tool_calls_only_json(saved_trace, capsys):
+    """`--tool-calls-only --format json` returns structured tool calls."""
+    trace_id, data_dir = saved_trace
+    assert (
+        main(
+            [
+                "run-detail",
+                trace_id,
+                "run-llm-1",
+                "--tool-calls-only",
+                "--format",
+                "json",
+                "--data-dir",
+                str(data_dir),
+            ]
+        )
+        == 0
+    )
+    out = capsys.readouterr().out
+    data = json.loads(out)
+    assert "tool_calls" in data
+    assert len(data["tool_calls"]) == 1
+    assert data["tool_calls"][0]["name"] == "calculator"
 
 
 def test_skeleton_json_is_structured(saved_trace, capsys):
@@ -209,6 +302,15 @@ def test_context_at_inputs_only(saved_trace, capsys):
     out = capsys.readouterr().out
     assert "## Input messages" in out
     assert "## Output" not in out
+
+
+def test_context_at_outputs_only(saved_trace, capsys):
+    """`--outputs-only` omits the input messages section."""
+    trace_id, data_dir = saved_trace
+    assert main(["context-at", trace_id, "0", "--outputs-only", "--data-dir", str(data_dir)]) == 0
+    out = capsys.readouterr().out
+    assert "## Output" in out
+    assert "## Input messages" not in out
 
 
 def test_context_at_tool_filter(saved_trace, capsys):

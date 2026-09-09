@@ -362,12 +362,23 @@ def _cmd_narrative(args: argparse.Namespace) -> int:
     store = _get_store(args)
     trace = store.load_trace(args.trace_id)
     mode = "full" if getattr(args, "full", False) else "compact"
+
+    step_from = getattr(args, "from_step", None)
+    step_to = getattr(args, "to_step", None)
+    around = getattr(args, "around_step", None)
+    if around is not None:
+        step_from = around - 1
+        step_to = around + 1
+
     if args.format == "json":
         from self_improve_cli.representations import narrative_data
 
-        _output(narrative_data(trace.runs, mode=mode), args)
+        _output(
+            narrative_data(trace.runs, mode=mode, step_from=step_from, step_to=step_to),
+            args,
+        )
     else:
-        content = build_narrative(trace.runs, mode=mode)
+        content = build_narrative(trace.runs, mode=mode, step_from=step_from, step_to=step_to)
         _output(content, args)
     return EXIT_OK
 
@@ -528,12 +539,13 @@ def _cmd_context_metrics(args: argparse.Namespace) -> int:
 def _cmd_run_detail(args: argparse.Namespace) -> int:
     store = _get_store(args)
     trace = store.load_trace(args.trace_id)
+    tool_calls_only = getattr(args, "tool_calls_only", False)
     if args.format == "json":
         from self_improve_cli.representations import run_detail_data
 
-        _output(run_detail_data(trace.runs, args.run_id), args)
+        _output(run_detail_data(trace.runs, args.run_id, tool_calls_only=tool_calls_only), args)
     else:
-        content = run_detail(trace.runs, args.run_id)
+        content = run_detail(trace.runs, args.run_id, tool_calls_only=tool_calls_only)
         _output(content, args)
     return EXIT_OK
 
@@ -546,6 +558,7 @@ def _cmd_context_at(args: argparse.Namespace) -> int:
     to_step = getattr(args, "to_step", None)
     tool_call_id = getattr(args, "tool_call_id", None)
     inputs_only = getattr(args, "inputs_only", False)
+    outputs_only = getattr(args, "outputs_only", False)
     full = getattr(args, "full", False)
 
     if args.format == "json":
@@ -555,6 +568,7 @@ def _cmd_context_at(args: argparse.Namespace) -> int:
             from_step=from_step,
             to_step=to_step,
             inputs_only=inputs_only,
+            outputs_only=outputs_only,
             tool_call_id=tool_call_id,
             full=full,
         )
@@ -566,6 +580,7 @@ def _cmd_context_at(args: argparse.Namespace) -> int:
             from_step=from_step,
             to_step=to_step,
             inputs_only=inputs_only,
+            outputs_only=outputs_only,
             tool_call_id=tool_call_id,
             full=full,
         )
@@ -1027,6 +1042,27 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Use full narrative (common-prefix diff). Default: compact (per-index diff).",
     )
+    p.add_argument(
+        "--from",
+        dest="from_step",
+        type=int,
+        metavar="N",
+        help="Only show steps >= N (1-based narrative step numbers).",
+    )
+    p.add_argument(
+        "--to",
+        dest="to_step",
+        type=int,
+        metavar="N",
+        help="Only show steps <= N (1-based narrative step numbers).",
+    )
+    p.add_argument(
+        "--around-step",
+        dest="around_step",
+        type=int,
+        metavar="N",
+        help="Show steps N-1 to N+1 (convenience for --from/--to).",
+    )
     add_common_opts(p)
     p.set_defaults(func=_cmd_narrative)
 
@@ -1073,6 +1109,11 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("run-detail", help="L3: full prompts/outputs of one run")
     p.add_argument("trace_id")
     p.add_argument("run_id")
+    p.add_argument(
+        "--tool-calls-only",
+        action="store_true",
+        help="Show only tool calls from the model output (LLM runs). Bounded, no prompts.",
+    )
     add_common_opts(p)
     p.set_defaults(func=_cmd_run_detail)
 
@@ -1101,6 +1142,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--inputs-only",
         action="store_true",
         help="Show only input messages (no output)",
+    )
+    p.add_argument(
+        "--outputs-only",
+        action="store_true",
+        help="Show only the model output (no input messages)",
     )
     p.add_argument(
         "--tool",

@@ -121,14 +121,14 @@ governs both.
    parse prose to recover identifiers already known to the CLI. Useful next
    actions should be grounded in available data — not generated diagnoses.
 
-### Command audit (as of Wave 1)
+### Command audit (as of Wave 2)
 
 | Command | Predictable | Bounded | Connected | Honest | Recoverable | Composable (JSON) |
 |---------|:-:|:-:|:-:|:-:|:-:|:-:|
 | `skeleton` | ✓ | ✓ | run IDs | ✓ | ✓ | ✓ structured |
-| `narrative` | ✓ | ✓ truncation markers | run IDs per step | ✓ | n/a | ✓ structured |
-| `run-detail` | ✓ | ✓ | parent/child refs | ✓ | ✓ suggests skeleton | ✓ structured |
-| `context-at` | ✓ step index | ✓ bounded preview | prev/next step, run-detail | ✓ inferred labels | ✓ lists valid steps | ✓ structured |
+| `narrative` | ✓ | ✓ truncation, `--from/--to/--around-step` | run IDs per step | ✓ | n/a | ✓ structured |
+| `run-detail` | ✓ | ✓ `--tool-calls-only` | parent/child refs | ✓ | ✓ suggests skeleton | ✓ structured |
+| `context-at` | ✓ step index | ✓ bounded preview, `--inputs-only/--outputs-only` | prev/next step, run-detail | ✓ inferred labels | ✓ lists valid steps | ✓ structured |
 | `target-timeline` | ✓ | ✓ truncation markers | run IDs per touch | ✓ | ✓ reports no matches | ✓ structured |
 | `error-neighborhood` | ✓ | ✓ window-bounded | run IDs, next step | ✓ excludes infra-cancelled | n/a | ✓ structured |
 | `tool-metrics` | ✓ | ✓ | n/a (aggregate) | ✓ approximate labels | n/a | ✓ structured |

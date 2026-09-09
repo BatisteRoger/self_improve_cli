@@ -10,7 +10,9 @@ from self_improve_cli.representations import (
     context_at_data,
     error_neighborhood,
     error_neighborhood_data,
+    narrative_data,
     run_detail,
+    run_detail_data,
     significant_runs,
     target_timeline,
     target_timeline_data,
@@ -187,6 +189,41 @@ def test_run_detail_no_related_runs_section_when_isolated():
     assert "## Related runs" not in detail
 
 
+def test_run_detail_tool_calls_only_shows_tool_calls():
+    """--tool-calls-only shows tool calls without prompts or output text."""
+    runs = _mini_runs()
+    detail = run_detail(runs, "run-llm-1", tool_calls_only=True)
+    assert "calculator" in detail
+    assert "expression" in detail
+    assert "## Input messages" not in detail
+    assert "## Output" not in detail
+    assert "## Related runs" not in detail
+
+
+def test_run_detail_tool_calls_only_no_calls():
+    """--tool-calls-only on a run with no tool calls says so honestly."""
+    runs = _mini_runs()
+    detail = run_detail(runs, "run-llm-2", tool_calls_only=True)
+    assert "no tool calls" in detail
+
+
+def test_run_detail_tool_calls_only_non_llm():
+    """--tool-calls-only on a non-LLM run reports it's for LLM runs."""
+    runs = _mini_runs()
+    detail = run_detail(runs, "run-tool-1", tool_calls_only=True)
+    assert "LLM runs" in detail
+
+
+def test_run_detail_data_tool_calls_only():
+    """run_detail_data with tool_calls_only returns structured tool calls."""
+    runs = _mini_runs()
+    data = run_detail_data(runs, "run-llm-1", tool_calls_only=True)
+    assert "tool_calls" in data
+    assert len(data["tool_calls"]) == 1
+    assert data["tool_calls"][0]["name"] == "calculator"
+    assert "input_messages" not in data
+
+
 def test_empty_trace_does_not_crash():
     assert "(empty trace)" in build_skeleton([])
     assert "(empty trace)" in build_narrative([])
@@ -337,6 +374,76 @@ def test_narrative_compact_still_shows_changed_system():
 
 
 # ---------------------------------------------------------------------------
+# SLN-36: narrative step-range filter
+# ---------------------------------------------------------------------------
+
+
+def test_narrative_step_from_filters_early_steps():
+    """--from N excludes steps before N but keeps the header and task."""
+    runs = _mini_runs()
+    narrative = build_narrative(runs, step_from=2)
+    assert "# Narrative" in narrative
+    assert "## Task" in narrative
+    assert "showing steps 2-" in narrative
+    assert "## Step 1 —" not in narrative
+    assert "## Step 2 —" in narrative
+
+
+def test_narrative_step_to_filters_late_steps():
+    """--to N excludes steps after N."""
+    runs = _mini_runs()
+    narrative = build_narrative(runs, step_to=1)
+    assert "## Step 1 —" in narrative
+    assert "## Step 2 —" not in narrative
+    assert "## Step 3 —" not in narrative
+
+
+def test_narrative_step_range_both():
+    """--from N --to M shows only steps in [N, M]."""
+    runs = _mini_runs()
+    narrative = build_narrative(runs, step_from=2, step_to=3)
+    assert "## Step 1 —" not in narrative
+    assert "## Step 2 —" in narrative
+    assert "## Step 3 —" in narrative
+    assert "## Step 4 —" not in narrative
+
+
+def test_narrative_step_range_includes_total():
+    """Range note shows total steps."""
+    runs = _mini_runs()
+    narrative = build_narrative(runs, step_from=2)
+    assert "of " in narrative
+
+
+def test_narrative_no_range_shows_all():
+    """Without range filter, all steps are shown and no range note appears."""
+    runs = _mini_runs()
+    narrative = build_narrative(runs)
+    assert "showing steps" not in narrative
+    assert "## Step 1 —" in narrative
+    assert "## Step 4 —" in narrative
+
+
+def test_narrative_data_step_range():
+    """narrative_data respects step_from/step_to and includes range metadata."""
+    runs = _mini_runs()
+    data = narrative_data(runs, step_from=2, step_to=3)
+    steps = data["steps"]
+    assert all(s["step"] >= 2 for s in steps)
+    assert all(s["step"] <= 3 for s in steps)
+    assert data["total_steps"] >= 3
+    assert data["step_range"] == {"from": 2, "to": 3, "total": data["total_steps"]}
+
+
+def test_narrative_data_no_range():
+    """narrative_data without range has no step_range key."""
+    runs = _mini_runs()
+    data = narrative_data(runs)
+    assert "step_range" not in data
+    assert "total_steps" in data
+
+
+# ---------------------------------------------------------------------------
 # SLN-33: significant_runs type consistency (UUID vs str parent_run_id)
 # ---------------------------------------------------------------------------
 
@@ -453,6 +560,29 @@ def test_context_at_inputs_only_omits_output():
     out = context_at(runs, 0, inputs_only=True)
     assert "## Input messages" in out
     assert "## Output" not in out
+
+
+def test_context_at_outputs_only_omits_inputs():
+    """--outputs-only shows the output but not the input messages section."""
+    runs = _mini_runs()
+    out = context_at(runs, 0, outputs_only=True)
+    assert "## Output" in out
+    assert "## Input messages" not in out
+
+
+def test_context_at_outputs_only_shows_tool_calls():
+    """--outputs-only shows tool calls in the output."""
+    runs = _mini_runs()
+    out = context_at(runs, 0, outputs_only=True)
+    assert "calculator" in out
+
+
+def test_context_at_data_outputs_only():
+    """context_at_data with outputs_only omits messages key."""
+    runs = _mini_runs()
+    data = context_at_data(runs, 0, outputs_only=True)
+    assert "messages" not in data
+    assert "output" in data
 
 
 def test_context_at_full_does_not_truncate():

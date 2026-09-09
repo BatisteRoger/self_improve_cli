@@ -294,7 +294,13 @@ def _narrative_llm_step_compact(
     return "\n".join(lines), msgs
 
 
-def build_narrative(runs: list[Run], mode: str = "compact") -> str:
+def build_narrative(
+    runs: list[Run],
+    mode: str = "compact",
+    *,
+    step_from: int | None = None,
+    step_to: int | None = None,
+) -> str:
     """Chronological story of the trace with message deltas per LLM call.
 
     Args:
@@ -302,6 +308,8 @@ def build_narrative(runs: list[Run], mode: str = "compact") -> str:
         mode: "compact" (default) — per-index diff, collapses unchanged messages
               even when earlier messages changed (e.g. dynamic system prompts).
               "full" — common-prefix diff, original behavior for humans skimming.
+        step_from: if given, only show steps >= step_from (1-based narrative steps).
+        step_to: if given, only show steps <= step_to.
     """
     sig = significant_runs(runs)
     if not sig:
@@ -323,11 +331,19 @@ def build_narrative(runs: list[Run], mode: str = "compact") -> str:
         task,
     ]
 
+    total_steps = 0
     step = 0
     previous_msgs: list[Message] = []
     for run in sig[1:]:
         if run.run_type == RunType.LLM:
             step += 1
+            total_steps = step
+            if _step_out_of_range(step, step_from, step_to):
+                if mode == "full":
+                    _, previous_msgs = _narrative_llm_step_full(run, previous_msgs)
+                else:
+                    _, previous_msgs = _narrative_llm_step_compact(run, previous_msgs, step)
+                continue
             header = (
                 f"## Step {step} — llm {run.name} "
                 f"(tokens={run.total_tokens}, latency={_latency_s(run)}s, id={run.id})"
@@ -339,6 +355,9 @@ def build_narrative(runs: list[Run], mode: str = "compact") -> str:
             sections += ["", header, "", body]
         elif run.run_type == RunType.TOOL:
             step += 1
+            total_steps = step
+            if _step_out_of_range(step, step_from, step_to):
+                continue
             args = json.dumps(run.inputs, default=str, ensure_ascii=False)
             sections += [
                 "",
@@ -349,6 +368,9 @@ def build_narrative(runs: list[Run], mode: str = "compact") -> str:
             ]
         else:
             step += 1
+            total_steps = step
+            if _step_out_of_range(step, step_from, step_to):
+                continue
             outputs = json.dumps(run.outputs, default=str, ensure_ascii=False)
             sections += [
                 "",
@@ -359,15 +381,42 @@ def build_narrative(runs: list[Run], mode: str = "compact") -> str:
         if run.error:
             sections.append(_format_error(str(run.error), 1000))
 
+    if step_from is not None or step_to is not None:
+        lo = step_from or 1
+        hi = step_to or total_steps
+        sections.insert(
+            3,
+            f"(showing steps {lo}-{hi} of {total_steps})",
+        )
+
     return "\n".join(sections) + "\n"
 
 
-def narrative_data(runs: list[Run], mode: str = "compact") -> dict[str, Any]:
+def _step_out_of_range(step: int, step_from: int | None, step_to: int | None) -> bool:
+    """True if step should be skipped based on the range filter."""
+    if step_from is not None and step < step_from:
+        return True
+    if step_to is not None and step > step_to:
+        return True
+    return False
+
+
+def narrative_data(
+    runs: list[Run],
+    mode: str = "compact",
+    *,
+    step_from: int | None = None,
+    step_to: int | None = None,
+) -> dict[str, Any]:
     """Structured narrative for JSON output (composable contract).
 
     Returns a dict with trace_id, root task, and a list of steps. Each step
     is a dict with run metadata and either message deltas (LLM), args/result
     (tool), or outputs (chain node).
+
+    Args:
+        step_from: if given, only include steps >= step_from (1-based narrative steps).
+        step_to: if given, only include steps <= step_to.
     """
     sig = significant_runs(runs)
     if not sig:
@@ -380,15 +429,19 @@ def narrative_data(runs: list[Run], mode: str = "compact") -> dict[str, Any]:
     )
 
     steps_out: list[dict[str, Any]] = []
+    total_steps = 0
     step = 0
     previous_msgs: list[Message] = []
     for run in sig[1:]:
         if run.run_type == RunType.LLM:
             step += 1
+            total_steps = step
             if mode == "full":
                 body, previous_msgs = _narrative_llm_step_full(run, previous_msgs)
             else:
                 body, previous_msgs = _narrative_llm_step_compact(run, previous_msgs, step)
+            if _step_out_of_range(step, step_from, step_to):
+                continue
             steps_out.append(
                 {
                     "step": step,
@@ -404,6 +457,9 @@ def narrative_data(runs: list[Run], mode: str = "compact") -> dict[str, Any]:
             )
         elif run.run_type == RunType.TOOL:
             step += 1
+            total_steps = step
+            if _step_out_of_range(step, step_from, step_to):
+                continue
             args = json.dumps(run.inputs, default=str, ensure_ascii=False)
             steps_out.append(
                 {
@@ -420,6 +476,9 @@ def narrative_data(runs: list[Run], mode: str = "compact") -> dict[str, Any]:
             )
         else:
             step += 1
+            total_steps = step
+            if _step_out_of_range(step, step_from, step_to):
+                continue
             outputs = json.dumps(run.outputs, default=str, ensure_ascii=False)
             steps_out.append(
                 {
@@ -434,15 +493,23 @@ def narrative_data(runs: list[Run], mode: str = "compact") -> dict[str, Any]:
                 }
             )
 
-    return {
+    result = {
         "trace_id": root.trace_id,
         "root_status": root.status,
         "root_total_tokens": root.total_tokens,
         "root_latency_s": _latency_s(root),
         "task": task,
         "mode": mode,
+        "total_steps": total_steps,
         "steps": steps_out,
     }
+    if step_from is not None or step_to is not None:
+        result["step_range"] = {
+            "from": step_from or 1,
+            "to": step_to or total_steps,
+            "total": total_steps,
+        }
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -450,8 +517,12 @@ def narrative_data(runs: list[Run], mode: str = "compact") -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def run_detail(runs: list[Run], run_id: str) -> str:
-    """Full untruncated context of one run, reconstructed from canonical data."""
+def run_detail(runs: list[Run], run_id: str, *, tool_calls_only: bool = False) -> str:
+    """Full untruncated context of one run, reconstructed from canonical data.
+
+    Args:
+        tool_calls_only: if True, show only tool calls from the output (LLM runs only).
+    """
     matches = [r for r in runs if str(r.id) == str(run_id)]
     if not matches:
         # Recoverable error: suggest how to find valid run IDs.
@@ -469,6 +540,10 @@ def run_detail(runs: list[Run], run_id: str) -> str:
             )
         raise ValueError(f"Run {run_id} not found in trace.\n\n{hint}")
     run = matches[0]
+
+    # Tool-calls-only mode: bounded extraction of tool calls from the output.
+    if tool_calls_only:
+        return _run_detail_tool_calls_only(run)
 
     # Find parent and child runs for navigation (connectedness).
     parent = None
@@ -526,12 +601,40 @@ def run_detail(runs: list[Run], run_id: str) -> str:
     return "\n".join(lines) + "\n"
 
 
-def run_detail_data(runs: list[Run], run_id: str) -> dict[str, Any]:
+def _run_detail_tool_calls_only(run: Run) -> str:
+    """Bounded view: only tool calls from the run's output."""
+    lines = [
+        f"# Tool calls — {run.name} ({run.run_type.value}) id={run.id}",
+        "",
+    ]
+    if run.run_type != RunType.LLM:
+        lines.append("(tool-calls-only is for LLM runs; this run has no model output.)")
+        return "\n".join(lines) + "\n"
+
+    out = run.output_message
+    if not out or not out.tool_calls:
+        lines.append("(no tool calls in this run's output)")
+        return "\n".join(lines) + "\n"
+
+    lines.append(f"## {len(out.tool_calls)} tool call(s)")
+    lines.append("")
+    for tc in out.tool_calls:
+        args = json.dumps(tc.args, default=str, ensure_ascii=False)
+        lines.append(f"- **{tc.name}**({_truncate(args, _MAX_TOOL_CHARS)}) id={tc.id}")
+    return "\n".join(lines) + "\n"
+
+
+def run_detail_data(
+    runs: list[Run], run_id: str, *, tool_calls_only: bool = False
+) -> dict[str, Any]:
     """Structured run detail for JSON output (composable contract).
 
     Returns a dict with run metadata, related runs (parent/children), and
     either input_messages+output (for LLM runs) or inputs+outputs (for other
     runs). Tool calls are included as structured objects, not prose.
+
+    Args:
+        tool_calls_only: if True, return only tool calls from the output (LLM runs).
 
     Raises ValueError if the run is not found (same recovery as run_detail).
     """
@@ -551,6 +654,22 @@ def run_detail_data(runs: list[Run], run_id: str) -> dict[str, Any]:
             )
         raise ValueError(f"Run {run_id} not found in trace.\n\n{hint}")
     run = matches[0]
+
+    # Tool-calls-only mode: bounded extraction.
+    if tool_calls_only:
+        out = run.output_message if run.run_type == RunType.LLM else None
+        tool_calls = (
+            [{"name": tc.name, "args": tc.args, "id": tc.id} for tc in out.tool_calls]
+            if out and out.tool_calls
+            else []
+        )
+        return {
+            "id": run.id,
+            "trace_id": run.trace_id,
+            "run_type": run.run_type.value,
+            "name": run.name,
+            "tool_calls": tool_calls,
+        }
 
     parent = None
     if run.parent_run_id:
@@ -650,6 +769,7 @@ def context_at(
     from_step: int | None = None,
     to_step: int | None = None,
     inputs_only: bool = False,
+    outputs_only: bool = False,
     tool_call_id: str | None = None,
     full: bool = False,
 ) -> str:
@@ -661,6 +781,7 @@ def context_at(
         from_step / to_step: if both given, show a diff of the message list
             between from_step and to_step instead of a single step.
         inputs_only: if True, show only input messages (no output).
+        outputs_only: if True, show only the output (no input messages).
         tool_call_id: if given, show only the tool result message matching
             this call id (and the preceding AI tool_call for context).
         full: if True, do not truncate message text.
@@ -703,15 +824,16 @@ def context_at(
             )
             return "\n".join(lines) + "\n"
 
-    lines.append("## Input messages")
-    lines.append("")
-    if not msgs:
-        lines.append("(no input messages recorded for this run)")
-    else:
-        limit = _CONTEXT_AT_PREVIEW if not full else 10**9
-        for i, msg in enumerate(msgs):
-            lines.append(f"### [{i}] {_msg_preview(msg, limit=limit)}")
-            lines.append("")
+    if not outputs_only:
+        lines.append("## Input messages")
+        lines.append("")
+        if not msgs:
+            lines.append("(no input messages recorded for this run)")
+        else:
+            limit = _CONTEXT_AT_PREVIEW if not full else 10**9
+            for i, msg in enumerate(msgs):
+                lines.append(f"### [{i}] {_msg_preview(msg, limit=limit)}")
+                lines.append("")
 
     if not inputs_only:
         lines.append("## Output")
@@ -858,6 +980,7 @@ def context_at_data(
     from_step: int | None = None,
     to_step: int | None = None,
     inputs_only: bool = False,
+    outputs_only: bool = False,
     tool_call_id: str | None = None,
     full: bool = False,
 ) -> dict[str, Any]:
@@ -906,9 +1029,11 @@ def context_at_data(
         "total_tokens": run.total_tokens,
         "latency_s": _latency_s(run),
         "error": run.error,
-        "messages": messages_out,
         "filtered_to_tool_call_id": tool_call_id,
     }
+
+    if not outputs_only:
+        result["messages"] = messages_out
 
     if not inputs_only:
         out = run.output_message
