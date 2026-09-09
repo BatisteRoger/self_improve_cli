@@ -135,8 +135,14 @@ def significant_runs(runs: list[Run]) -> list[Run]:
 # ---------------------------------------------------------------------------
 
 
-def build_skeleton(runs: list[Run]) -> str:
-    """One line per significant run: order, type, name, tokens, latency, error."""
+def build_skeleton(runs: list[Run], *, errors_only: bool = False) -> str:
+    """One line per significant run: order, type, name, tokens, latency, error.
+
+    Args:
+        errors_only: if True, show only runs with error or cancelled status,
+            plus a header noting how many were filtered out. The root summary
+            line is always shown (it carries trace-level status).
+    """
     sig = significant_runs(runs)
     if not sig:
         return "# Skeleton\n\n(empty trace)\n"
@@ -149,6 +155,30 @@ def build_skeleton(runs: list[Run]) -> str:
         f"total_tokens={root.total_tokens} latency={_latency_s(root)}s",
         "",
     ]
+
+    if errors_only:
+        error_runs = [
+            (i, run)
+            for i, run in enumerate(sig)
+            if run.error or (run.status and run.status != "success")
+        ]
+        if not error_runs:
+            lines.append("No errors or cancellations in this trace.")
+            return "\n".join(lines) + "\n"
+        lines.append(f"{len(error_runs)} error/cancelled run(s) (of {len(sig)} significant runs):")
+        lines.append("")
+        for i, run in error_runs:
+            depth = len((run.dotted_order or "").split(".")) - 1
+            indent = "  " * depth
+            error = _format_error(str(run.error), 200) if run.error else ""
+            tokens = run.total_tokens
+            tokens_part = f" tokens={tokens}" if tokens else ""
+            lines.append(
+                f"{i:3d}. {indent}[{run.run_type.value}] {run.name}"
+                f"{tokens_part} latency={_latency_s(run)}s id={run.id}{error}"
+            )
+        return "\n".join(lines) + "\n"
+
     for i, run in enumerate(sig):
         depth = len((run.dotted_order or "").split(".")) - 1
         indent = "  " * depth
@@ -162,7 +192,7 @@ def build_skeleton(runs: list[Run]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def skeleton_data(runs: list[Run]) -> dict[str, Any]:
+def skeleton_data(runs: list[Run], *, errors_only: bool = False) -> dict[str, Any]:
     """Structured skeleton data for JSON output (composable contract).
 
     Returns a dict with trace_id, root summary, and a list of significant runs.
@@ -172,30 +202,52 @@ def skeleton_data(runs: list[Run]) -> dict[str, Any]:
     Unlike build_skeleton (which returns markdown), this returns structured
     data so an analyst agent can programmatically extract run IDs without
     parsing prose.
+
+    Args:
+        errors_only: if True, the runs list contains only error/cancelled runs.
+            The dict includes `errors_only: true` and `filtered_out` count.
     """
     sig = significant_runs(runs)
     if not sig:
         return {"trace_id": None, "root": None, "runs": []}
 
     root = sig[0]
-    run_list: list[dict[str, Any]] = []
-    for i, run in enumerate(sig):
-        depth = len((run.dotted_order or "").split(".")) - 1
-        run_list.append(
-            {
-                "index": i,
-                "id": run.id,
-                "run_type": run.run_type.value,
-                "name": run.name,
-                "depth": depth,
-                "parent_run_id": run.parent_run_id,
-                "status": run.status,
-                "total_tokens": run.total_tokens,
-                "latency_s": _latency_s(run),
-                "error": run.error,
-            }
-        )
 
+    def _run_entry(i: int, run: Run) -> dict[str, Any]:
+        depth = len((run.dotted_order or "").split(".")) - 1
+        return {
+            "index": i,
+            "id": run.id,
+            "run_type": run.run_type.value,
+            "name": run.name,
+            "depth": depth,
+            "parent_run_id": run.parent_run_id,
+            "status": run.status,
+            "total_tokens": run.total_tokens,
+            "latency_s": _latency_s(run),
+            "error": run.error,
+        }
+
+    if errors_only:
+        error_runs = [
+            (i, run)
+            for i, run in enumerate(sig)
+            if run.error or (run.status and run.status != "success")
+        ]
+        return {
+            "trace_id": root.trace_id,
+            "root": {
+                "name": root.name,
+                "status": root.status,
+                "total_tokens": root.total_tokens,
+                "latency_s": _latency_s(root),
+            },
+            "errors_only": True,
+            "filtered_out": len(sig) - len(error_runs),
+            "runs": [_run_entry(i, run) for i, run in error_runs],
+        }
+
+    run_list = [_run_entry(i, run) for i, run in enumerate(sig)]
     return {
         "trace_id": root.trace_id,
         "root": {
@@ -517,11 +569,20 @@ def narrative_data(
 # ---------------------------------------------------------------------------
 
 
-def run_detail(runs: list[Run], run_id: str, *, tool_calls_only: bool = False) -> str:
+def run_detail(
+    runs: list[Run],
+    run_id: str,
+    *,
+    tool_calls_only: bool = False,
+    inputs_only: bool = False,
+    outputs_only: bool = False,
+) -> str:
     """Full untruncated context of one run, reconstructed from canonical data.
 
     Args:
         tool_calls_only: if True, show only tool calls from the output (LLM runs only).
+        inputs_only: if True, show only the input section (no output).
+        outputs_only: if True, show only the output section (no input).
     """
     matches = [r for r in runs if str(r.id) == str(run_id)]
     if not matches:
@@ -559,8 +620,9 @@ def run_detail(runs: list[Run], run_id: str, *, tool_calls_only: bool = False) -
         "",
     ]
 
-    # Navigation references (connectedness contract).
-    if parent or children:
+    # Navigation references (connectedness contract) — shown unless a single
+    # section is requested (inputs_only/outputs_only focus on one section).
+    if not inputs_only and not outputs_only and (parent or children):
         lines.append("## Related runs")
         lines.append("")
         if parent:
@@ -575,29 +637,35 @@ def run_detail(runs: list[Run], run_id: str, *, tool_calls_only: bool = False) -
             )
         lines.append("")
     if run.run_type == RunType.LLM:
-        lines.append("## Input messages")
-        for msg in run.input_messages:
-            lines += ["", f"### [{msg.role}]", "", msg.text]
-            if msg.tool_calls:
-                lines.append(_format_tool_calls(msg.tool_calls))
-        out = run.output_message
-        lines += ["", "## Output", ""]
-        if out:
-            lines.append(out.text)
-            if out.tool_calls:
-                lines.append(_format_tool_calls(out.tool_calls))
-        else:
-            lines.append(json.dumps(run.outputs, indent=2, default=str))
+        if not outputs_only:
+            lines.append("## Input messages")
+            for msg in run.input_messages:
+                lines += ["", f"### [{msg.role}]", "", msg.text]
+                if msg.tool_calls:
+                    lines.append(_format_tool_calls(msg.tool_calls))
+        if not inputs_only:
+            out = run.output_message
+            lines += ["", "## Output", ""]
+            if out:
+                lines.append(out.text)
+                if out.tool_calls:
+                    lines.append(_format_tool_calls(out.tool_calls))
+            else:
+                lines.append(json.dumps(run.outputs, indent=2, default=str))
     else:
-        lines += [
-            "## Inputs",
-            "",
-            json.dumps(run.inputs, indent=2, default=str, ensure_ascii=False),
-            "",
-            "## Outputs",
-            "",
-            json.dumps(run.outputs, indent=2, default=str, ensure_ascii=False),
-        ]
+        if not outputs_only:
+            lines += [
+                "## Inputs",
+                "",
+                json.dumps(run.inputs, indent=2, default=str, ensure_ascii=False),
+            ]
+        if not inputs_only:
+            lines += [
+                "",
+                "## Outputs",
+                "",
+                json.dumps(run.outputs, indent=2, default=str, ensure_ascii=False),
+            ]
     return "\n".join(lines) + "\n"
 
 
@@ -625,7 +693,12 @@ def _run_detail_tool_calls_only(run: Run) -> str:
 
 
 def run_detail_data(
-    runs: list[Run], run_id: str, *, tool_calls_only: bool = False
+    runs: list[Run],
+    run_id: str,
+    *,
+    tool_calls_only: bool = False,
+    inputs_only: bool = False,
+    outputs_only: bool = False,
 ) -> dict[str, Any]:
     """Structured run detail for JSON output (composable contract).
 
@@ -635,6 +708,8 @@ def run_detail_data(
 
     Args:
         tool_calls_only: if True, return only tool calls from the output (LLM runs).
+        inputs_only: if True, omit the output section.
+        outputs_only: if True, omit the input section.
 
     Raises ValueError if the run is not found (same recovery as run_detail).
     """
@@ -700,31 +775,35 @@ def run_detail_data(
     }
 
     if run.run_type == RunType.LLM:
-        result["input_messages"] = [
-            {
-                "role": msg.role,
-                "text": msg.text,
-                "tool_calls": [
-                    {"name": tc.name, "args": tc.args, "id": tc.id} for tc in msg.tool_calls
-                ],
-                "tool_call_id": msg.tool_call_id,
-            }
-            for msg in run.input_messages
-        ]
-        out = run.output_message
-        if out:
-            result["output"] = {
-                "role": out.role,
-                "text": out.text,
-                "tool_calls": [
-                    {"name": tc.name, "args": tc.args, "id": tc.id} for tc in out.tool_calls
-                ],
-            }
-        else:
-            result["output"] = run.outputs
+        if not outputs_only:
+            result["input_messages"] = [
+                {
+                    "role": msg.role,
+                    "text": msg.text,
+                    "tool_calls": [
+                        {"name": tc.name, "args": tc.args, "id": tc.id} for tc in msg.tool_calls
+                    ],
+                    "tool_call_id": msg.tool_call_id,
+                }
+                for msg in run.input_messages
+            ]
+        if not inputs_only:
+            out = run.output_message
+            if out:
+                result["output"] = {
+                    "role": out.role,
+                    "text": out.text,
+                    "tool_calls": [
+                        {"name": tc.name, "args": tc.args, "id": tc.id} for tc in out.tool_calls
+                    ],
+                }
+            else:
+                result["output"] = run.outputs
     else:
-        result["inputs"] = run.inputs
-        result["outputs"] = run.outputs
+        if not outputs_only:
+            result["inputs"] = run.inputs
+        if not inputs_only:
+            result["outputs"] = run.outputs
 
     return result
 
@@ -1148,12 +1227,17 @@ def _run_matches_target(run: Run, target: str) -> bool:
     return False
 
 
-def target_timeline(runs: list[Run], target: str) -> str:
+def target_timeline(runs: list[Run], target: str, *, compact: bool = False) -> str:
     """Every significant step that touched a target, in chronological order.
 
     A step "touches" the target if the target string appears in the run's
     name, inputs, or outputs. This is a substring match — the analyst picks
     the target (a file path, a key, a tool name).
+
+    Args:
+        compact: if True, show only tool name + status per step, omitting
+            full args and results. Useful for overview questions ("did the
+            agent keep touching the same target?") on long traces.
 
     Shows the outcome of each touch (status, error, truncated args/result).
     Includes run IDs for drill-down via run-detail.
@@ -1179,52 +1263,63 @@ def target_timeline(runs: list[Run], target: str) -> str:
         outcome = run.status or "?"
         if run.error:
             outcome += f" error={_truncate(str(run.error), 200)}"
-        args = json.dumps(run.inputs, default=str, ensure_ascii=False)
-        result = (
-            _tool_result_text(run)
-            if run.run_type == RunType.TOOL
-            else json.dumps(run.outputs, default=str, ensure_ascii=False)
-        )
         lines.append(f"{i + 1}. [{run.run_type.value}] {run.name} id={run.id} — {outcome}")
-        lines.append(f"   args: {_truncate(args, _MAX_TOOL_CHARS)}")
-        lines.append(f"   result: {_truncate(result, _MAX_TOOL_CHARS)}")
-        lines.append(f"   → `self-improve run-detail <trace_id> {run.id}`")
+        if compact:
+            lines.append(f"   → `self-improve run-detail <trace_id> {run.id}`")
+        else:
+            args = json.dumps(run.inputs, default=str, ensure_ascii=False)
+            result = (
+                _tool_result_text(run)
+                if run.run_type == RunType.TOOL
+                else json.dumps(run.outputs, default=str, ensure_ascii=False)
+            )
+            lines.append(f"   args: {_truncate(args, _MAX_TOOL_CHARS)}")
+            lines.append(f"   result: {_truncate(result, _MAX_TOOL_CHARS)}")
+            lines.append(f"   → `self-improve run-detail <trace_id> {run.id}`")
         lines.append("")
 
     return "\n".join(lines) + "\n"
 
 
-def target_timeline_data(runs: list[Run], target: str) -> dict[str, Any]:
-    """Structured target timeline for JSON output (composable contract)."""
+def target_timeline_data(runs: list[Run], target: str, *, compact: bool = False) -> dict[str, Any]:
+    """Structured target timeline for JSON output (composable contract).
+
+    Args:
+        compact: if True, omit args and result from each touch entry.
+    """
     sig = significant_runs(runs)
     if not sig:
         return {"trace_id": runs[0].trace_id if runs else "", "target": target, "touches": []}
 
     matches = [r for r in sig if _run_matches_target(r, target)]
+
+    def _touch_entry(i: int, r: Run) -> dict[str, Any]:
+        entry: dict[str, Any] = {
+            "index": i,
+            "run_id": r.id,
+            "run_type": r.run_type.value,
+            "name": r.name,
+            "status": r.status,
+            "error": _truncate(str(r.error), 200) if r.error else None,
+        }
+        if not compact:
+            entry["args"] = _truncate(
+                json.dumps(r.inputs, default=str, ensure_ascii=False), _MAX_TOOL_CHARS
+            )
+            entry["result"] = _truncate(
+                _tool_result_text(r)
+                if r.run_type == RunType.TOOL
+                else json.dumps(r.outputs, default=str, ensure_ascii=False),
+                _MAX_TOOL_CHARS,
+            )
+        return entry
+
     return {
         "trace_id": sig[0].trace_id if sig else "",
         "target": target,
         "touch_count": len(matches),
-        "touches": [
-            {
-                "index": i,
-                "run_id": r.id,
-                "run_type": r.run_type.value,
-                "name": r.name,
-                "status": r.status,
-                "error": _truncate(str(r.error), 200) if r.error else None,
-                "args": _truncate(
-                    json.dumps(r.inputs, default=str, ensure_ascii=False), _MAX_TOOL_CHARS
-                ),
-                "result": _truncate(
-                    _tool_result_text(r)
-                    if r.run_type == RunType.TOOL
-                    else json.dumps(r.outputs, default=str, ensure_ascii=False),
-                    _MAX_TOOL_CHARS,
-                ),
-            }
-            for i, r in enumerate(matches)
-        ],
+        "compact": compact,
+        "touches": [_touch_entry(i, r) for i, r in enumerate(matches)],
     }
 
 

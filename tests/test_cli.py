@@ -126,6 +126,87 @@ def test_skeleton_command(saved_trace, capsys):
     assert "[llm]" in out
 
 
+def test_skeleton_errors_only_no_errors(saved_trace, capsys):
+    """skeleton --errors-only on a clean trace says no errors."""
+    trace_id, data_dir = saved_trace
+    assert main(["skeleton", trace_id, "--errors-only", "--data-dir", str(data_dir)]) == 0
+    out = capsys.readouterr().out
+    assert "No errors or cancellations" in out
+
+
+def test_skeleton_errors_only_with_error(tmp_path, capsys):
+    """skeleton --errors-only shows only runs with errors."""
+    trace = Trace(
+        trace_id="trace-err",
+        runs=[
+            make_root(trace_id="trace-err"),
+            make_run("llm-1", run_type=RunType.LLM, name="ChatOpenAI", trace_id="trace-err"),
+            make_run(
+                "tool-1",
+                run_type=RunType.TOOL,
+                name="edit_file",
+                trace_id="trace-err",
+                error="Permission denied",
+            ),
+            make_run("llm-2", run_type=RunType.LLM, name="ChatOpenAI", trace_id="trace-err"),
+        ],
+        sanitized=True,
+        sanitization_report={"entity_counts": {}, "complete": True},
+        source="test",
+    )
+    store = TraceStore(data_root=tmp_path)
+    store.save_sanitized(trace)
+    assert main(["skeleton", "trace-err", "--errors-only", "--data-dir", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert "edit_file" in out
+    assert "ERROR" in out
+    # Clean runs should not appear in the body (only in the count)
+    assert "ChatOpenAI" not in out
+
+
+def test_skeleton_errors_only_json(tmp_path, capsys):
+    """skeleton --errors-only --format json returns structured data with filtered_out."""
+    trace = Trace(
+        trace_id="trace-err",
+        runs=[
+            make_root(trace_id="trace-err"),
+            make_run("llm-1", run_type=RunType.LLM, name="ChatOpenAI", trace_id="trace-err"),
+            make_run(
+                "tool-1",
+                run_type=RunType.TOOL,
+                name="edit_file",
+                trace_id="trace-err",
+                error="Permission denied",
+            ),
+        ],
+        sanitized=True,
+        sanitization_report={"entity_counts": {}, "complete": True},
+        source="test",
+    )
+    store = TraceStore(data_root=tmp_path)
+    store.save_sanitized(trace)
+    assert (
+        main(
+            [
+                "skeleton",
+                "trace-err",
+                "--errors-only",
+                "--format",
+                "json",
+                "--data-dir",
+                str(tmp_path),
+            ]
+        )
+        == 0
+    )
+    out = capsys.readouterr().out
+    data = json.loads(out)
+    assert data["errors_only"] is True
+    assert data["filtered_out"] == 2  # root + llm-1
+    assert len(data["runs"]) == 1
+    assert data["runs"][0]["name"] == "edit_file"
+
+
 def test_narrative_command(saved_trace, capsys):
     trace_id, data_dir = saved_trace
     assert main(["narrative", trace_id, "--data-dir", str(data_dir)]) == 0
@@ -232,6 +313,143 @@ def test_run_detail_tool_calls_only_json(saved_trace, capsys):
     assert "tool_calls" in data
     assert len(data["tool_calls"]) == 1
     assert data["tool_calls"][0]["name"] == "calculator"
+
+
+def test_run_detail_inputs_only(saved_trace, capsys):
+    """`--inputs-only` shows input messages without the output section."""
+    trace_id, data_dir = saved_trace
+    assert (
+        main(["run-detail", trace_id, "run-llm-2", "--inputs-only", "--data-dir", str(data_dir)])
+        == 0
+    )
+    out = capsys.readouterr().out
+    assert "## Input messages" in out
+    assert "## Output" not in out
+    assert "2+2 = 4." not in out
+
+
+def test_run_detail_outputs_only(saved_trace, capsys):
+    """`--outputs-only` shows the output section without input messages."""
+    trace_id, data_dir = saved_trace
+    assert (
+        main(["run-detail", trace_id, "run-llm-2", "--outputs-only", "--data-dir", str(data_dir)])
+        == 0
+    )
+    out = capsys.readouterr().out
+    assert "## Output" in out
+    assert "2+2 = 4." in out
+    assert "## Input messages" not in out
+
+
+def test_run_detail_inputs_only_json(saved_trace, capsys):
+    """`--inputs-only --format json` omits the output key."""
+    trace_id, data_dir = saved_trace
+    assert (
+        main(
+            [
+                "run-detail",
+                trace_id,
+                "run-llm-2",
+                "--inputs-only",
+                "--format",
+                "json",
+                "--data-dir",
+                str(data_dir),
+            ]
+        )
+        == 0
+    )
+    out = capsys.readouterr().out
+    data = json.loads(out)
+    assert "input_messages" in data
+    assert "output" not in data
+
+
+def test_run_detail_outputs_only_json(saved_trace, capsys):
+    """`--outputs-only --format json` omits the input_messages key."""
+    trace_id, data_dir = saved_trace
+    assert (
+        main(
+            [
+                "run-detail",
+                trace_id,
+                "run-llm-2",
+                "--outputs-only",
+                "--format",
+                "json",
+                "--data-dir",
+                str(data_dir),
+            ]
+        )
+        == 0
+    )
+    out = capsys.readouterr().out
+    data = json.loads(out)
+    assert "output" in data
+    assert "input_messages" not in data
+
+
+def test_run_detail_inputs_only_outputs_only_mutually_exclusive(saved_trace, capsys):
+    """`--inputs-only --outputs-only` returns exit code 2 (usage error)."""
+    trace_id, data_dir = saved_trace
+    assert (
+        main(
+            [
+                "run-detail",
+                trace_id,
+                "run-llm-2",
+                "--inputs-only",
+                "--outputs-only",
+                "--data-dir",
+                str(data_dir),
+            ]
+        )
+        == 2  # EXIT_USAGE
+    )
+    err = capsys.readouterr().err
+    assert "mutually exclusive" in err
+
+
+def test_run_detail_tool_calls_only_inputs_only_mutually_exclusive(saved_trace, capsys):
+    """`--tool-calls-only --inputs-only` returns exit code 2 (usage error)."""
+    trace_id, data_dir = saved_trace
+    assert (
+        main(
+            [
+                "run-detail",
+                trace_id,
+                "run-llm-1",
+                "--tool-calls-only",
+                "--inputs-only",
+                "--data-dir",
+                str(data_dir),
+            ]
+        )
+        == 2  # EXIT_USAGE
+    )
+    err = capsys.readouterr().err
+    assert "mutually exclusive" in err
+
+
+def test_context_at_inputs_only_outputs_only_mutually_exclusive(saved_trace, capsys):
+    """context-at `--inputs-only --outputs-only` returns exit code 2 (usage error)."""
+    trace_id, data_dir = saved_trace
+    assert (
+        main(
+            [
+                "context-at",
+                trace_id,
+                "0",
+                "--inputs-only",
+                "--outputs-only",
+                "--data-dir",
+                str(data_dir),
+            ]
+        )
+        == 2  # EXIT_USAGE
+    )
+    err = capsys.readouterr().err
+    assert "mutually exclusive" in err
 
 
 def test_skeleton_json_is_structured(saved_trace, capsys):
@@ -427,6 +645,59 @@ def test_target_timeline_json_is_structured(saved_trace, capsys):
     assert "content" not in data
     assert data["target"] == "calculator"
     assert isinstance(data["touches"], list)
+
+
+def test_target_timeline_compact_omits_args_and_result(saved_trace, capsys):
+    """`--compact` shows tool name + status only, no args/result."""
+    trace_id, data_dir = saved_trace
+    assert (
+        main(["target-timeline", trace_id, "calculator", "--compact", "--data-dir", str(data_dir)])
+        == 0
+    )
+    out = capsys.readouterr().out
+    assert "calculator" in out
+    assert "args:" not in out
+    assert "result:" not in out
+    # Drill-down link should still be present (Connected contract)
+    assert "run-detail" in out
+
+
+def test_target_timeline_compact_json_omits_args_and_result(saved_trace, capsys):
+    """`--compact --format json` omits args/result keys, sets compact=true."""
+    trace_id, data_dir = saved_trace
+    assert (
+        main(
+            [
+                "target-timeline",
+                trace_id,
+                "calculator",
+                "--compact",
+                "--format",
+                "json",
+                "--data-dir",
+                str(data_dir),
+            ]
+        )
+        == 0
+    )
+    out = capsys.readouterr().out
+    data = json.loads(out)
+    assert data["compact"] is True
+    assert len(data["touches"]) > 0
+    touch = data["touches"][0]
+    assert "args" not in touch
+    assert "result" not in touch
+    assert "name" in touch
+    assert "status" in touch
+
+
+def test_target_timeline_default_includes_args_and_result(saved_trace, capsys):
+    """Default (no --compact) includes args and result lines."""
+    trace_id, data_dir = saved_trace
+    assert main(["target-timeline", trace_id, "calculator", "--data-dir", str(data_dir)]) == 0
+    out = capsys.readouterr().out
+    assert "args:" in out
+    assert "result:" in out
 
 
 def test_error_neighborhood_command_no_errors(saved_trace, capsys):

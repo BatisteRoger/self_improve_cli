@@ -74,13 +74,14 @@ Then, depending on the question:
 
 | Question | Next command | Drill-down if insufficient |
 |----------|-------------|---------------------------|
+| "Which steps errored or were cancelled?" | `skeleton --errors-only` | `error-neighborhood` for context around each error |
 | "Why did this tool call fail?" | `run-detail` on the tool run | `context-at` for the next model input |
-| "Did the model receive that?" | `context-at` for the step | `run-detail` on the surrounding runs |
-| "Why did it read this file 4 times?" | `tool-metrics` | `target-timeline` then `run-detail` on each touch |
+| "Did the model receive that?" | `context-at` for the step | `run-detail --inputs-only` on the next LLM run |
+| "Why did it read this file 4 times?" | `tool-metrics` | `target-timeline --compact` (overview), then `run-detail` on each touch |
 | "Did compaction drop the constraint?" | `context-metrics` (look for a drop) | `context-at --from N --to M` across the drop |
-| "What supports the final claim?" | `narrative` (find the claim) | `run-detail` on the last LLM run |
+| "What supports the final claim?" | `narrative` (find the claim) | `run-detail --outputs-only` on the last LLM run |
 | "Where did this become expensive?" | `context-metrics` growth curve | `tool-metrics` for attribution |
-| "Is this trace clean?" | `skeleton` (final status, errors) | `tool-metrics`, `context-metrics`, `error-neighborhood` |
+| "Is this trace clean?" | `skeleton --errors-only` (quick triage) | `tool-metrics`, `context-metrics`, `error-neighborhood` |
 | "Did the agent recover from that error?" | `error-neighborhood` | `run-detail` on the error and the next step |
 
 Read each command's output before deciding whether to drill down. The

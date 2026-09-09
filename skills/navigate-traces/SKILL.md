@@ -28,13 +28,14 @@ a template.
 |----------|-----------|--------------------------------|
 | "What happened in this trace?" | `skeleton` (shows assessment header if set) | `narrative` for the relevant section |
 | "What was the agent asked to do, and did it succeed?" | `assess <trace_id>` (show) | `skeleton` for run-level evidence |
+| "Which steps errored or were cancelled?" | `skeleton --errors-only` | `error-neighborhood` for context around each error |
 | "Why did this tool call fail?" | `run-detail` on the tool run | `context-at` for the next model input |
-| "Did the model receive that tool result/error?" | `context-at` for the step | `run-detail` on the surrounding runs |
-| "Why did it read this file 4 times?" | `tool-metrics` | `target-timeline <trace_id> <file>` then `run-detail` on each touch |
+| "Did the model receive that tool result/error?" | `context-at` for the step | `run-detail --inputs-only` on the next LLM run |
+| "Why did it read this file 4 times?" | `tool-metrics` | `target-timeline <trace_id> <file> --compact` (overview), then `run-detail` on each touch |
 | "Did compaction drop the user's constraint?" | `context-metrics` (look for a drop) | `run-detail` on the LLM steps before/after the drop |
-| "What supports the final claim?" | `narrative` (find the claim) | `run-detail` on the last LLM run |
+| "What supports the final claim?" | `narrative` (find the claim) | `run-detail --outputs-only` on the last LLM run |
 | "Where did this become expensive?" | `context-metrics` growth curve | `tool-metrics` for attribution, then `run-detail` on the largest contributor |
-| "Is this trace clean?" | `skeleton` (final status, errors) | `tool-metrics` and `context-metrics` for redundancy/anomalies, `error-neighborhood` for error recovery |
+| "Is this trace clean?" | `skeleton --errors-only` (quick triage) | `tool-metrics` and `context-metrics` for redundancy/anomalies, `error-neighborhood` for error recovery |
 | "Did the agent recover from that error?" | `error-neighborhood` | `run-detail` on the error and the next step |
 | "What should I inspect next?" | The signal you already have (a metric, a run ID) | A specific run reference, not a generic checklist |
 

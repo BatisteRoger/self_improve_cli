@@ -350,11 +350,12 @@ def _cmd_fetch(args: argparse.Namespace) -> int:
 def _cmd_skeleton(args: argparse.Namespace) -> int:
     store = _get_store(args)
     trace = store.load_trace(args.trace_id)
+    errors_only = getattr(args, "errors_only", False)
     assessment = store.load_assessment(args.trace_id)
     if args.format == "json":
         from self_improve_cli.representations import skeleton_data
 
-        data = skeleton_data(trace.runs)
+        data = skeleton_data(trace.runs, errors_only=errors_only)
         if assessment:
             data["assessment"] = {
                 "task": assessment.task,
@@ -365,7 +366,7 @@ def _cmd_skeleton(args: argparse.Namespace) -> int:
             }
         _output(data, args)
     else:
-        content = build_skeleton(trace.runs)
+        content = build_skeleton(trace.runs, errors_only=errors_only)
         if assessment:
             header = (
                 f"**Assessment: {assessment.outcome.value} "
@@ -570,12 +571,49 @@ def _cmd_run_detail(args: argparse.Namespace) -> int:
     store = _get_store(args)
     trace = store.load_trace(args.trace_id)
     tool_calls_only = getattr(args, "tool_calls_only", False)
+    inputs_only = getattr(args, "inputs_only", False)
+    outputs_only = getattr(args, "outputs_only", False)
+
+    # Enforce mutual exclusion (Recoverable contract): at most one of these
+    # scoping flags may be active. Two together produce an empty or confusing
+    # body silently — reject explicitly instead.
+    active = [
+        f
+        for f, v in (
+            ("--tool-calls-only", tool_calls_only),
+            ("--inputs-only", inputs_only),
+            ("--outputs-only", outputs_only),
+        )
+        if v
+    ]
+    if len(active) > 1:
+        print(
+            f"Error: {' and '.join(active)} are mutually exclusive. Pick one.",
+            file=sys.stderr,
+        )
+        return EXIT_USAGE
+
     if args.format == "json":
         from self_improve_cli.representations import run_detail_data
 
-        _output(run_detail_data(trace.runs, args.run_id, tool_calls_only=tool_calls_only), args)
+        _output(
+            run_detail_data(
+                trace.runs,
+                args.run_id,
+                tool_calls_only=tool_calls_only,
+                inputs_only=inputs_only,
+                outputs_only=outputs_only,
+            ),
+            args,
+        )
     else:
-        content = run_detail(trace.runs, args.run_id, tool_calls_only=tool_calls_only)
+        content = run_detail(
+            trace.runs,
+            args.run_id,
+            tool_calls_only=tool_calls_only,
+            inputs_only=inputs_only,
+            outputs_only=outputs_only,
+        )
         _output(content, args)
     return EXIT_OK
 
@@ -596,6 +634,14 @@ def _cmd_context_at(args: argparse.Namespace) -> int:
         missing = "--to" if from_step is not None else "--from"
         print(
             f"Error: --from and --to must be used together. Missing {missing}.",
+            file=sys.stderr,
+        )
+        return EXIT_USAGE
+
+    # Enforce --inputs-only/--outputs-only mutual exclusion (Recoverable contract).
+    if inputs_only and outputs_only:
+        print(
+            "Error: --inputs-only and --outputs-only are mutually exclusive. Pick one.",
             file=sys.stderr,
         )
         return EXIT_USAGE
@@ -631,10 +677,11 @@ def _cmd_target_timeline(args: argparse.Namespace) -> int:
     """Every step that touched a given target (file/path/key), in order."""
     store = _get_store(args)
     trace = store.load_trace(args.trace_id)
+    compact = getattr(args, "compact", False)
     if args.format == "json":
-        _output(target_timeline_data(trace.runs, args.target), args)
+        _output(target_timeline_data(trace.runs, args.target, compact=compact), args)
     else:
-        _output(target_timeline(trace.runs, args.target), args)
+        _output(target_timeline(trace.runs, args.target, compact=compact), args)
     return EXIT_OK
 
 
@@ -1079,6 +1126,11 @@ def build_parser() -> argparse.ArgumentParser:
     # skeleton
     p = sub.add_parser("skeleton", help="L1: one line per significant run")
     p.add_argument("trace_id")
+    p.add_argument(
+        "--errors-only",
+        action="store_true",
+        help="Show only runs with error or cancelled status (quick triage).",
+    )
     add_common_opts(p)
     p.set_defaults(func=_cmd_skeleton)
 
@@ -1160,7 +1212,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--tool-calls-only",
         action="store_true",
-        help="Show only tool calls from the model output (LLM runs). Bounded, no prompts.",
+        help="Show only tool calls from the model output (LLM runs). "
+        "Mutually exclusive with --inputs-only and --outputs-only.",
+    )
+    p.add_argument(
+        "--inputs-only",
+        action="store_true",
+        help="Show only the input section (no output). Mirrors context-at --inputs-only. "
+        "Mutually exclusive with --tool-calls-only and --outputs-only.",
+    )
+    p.add_argument(
+        "--outputs-only",
+        action="store_true",
+        help="Show only the output section (no input). Mirrors context-at --outputs-only. "
+        "Mutually exclusive with --tool-calls-only and --inputs-only.",
     )
     add_common_opts(p)
     p.set_defaults(func=_cmd_run_detail)
@@ -1189,12 +1254,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--inputs-only",
         action="store_true",
-        help="Show only input messages (no output)",
+        help="Show only input messages (no output). Mutually exclusive with --outputs-only.",
     )
     p.add_argument(
         "--outputs-only",
         action="store_true",
-        help="Show only the model output (no input messages)",
+        help="Show only the model output (no input messages). "
+        "Mutually exclusive with --inputs-only.",
     )
     p.add_argument(
         "--tool",
@@ -1217,6 +1283,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("trace_id")
     p.add_argument("target", help="Target string (file path, key, tool name)")
+    p.add_argument(
+        "--compact",
+        action="store_true",
+        help="Show only tool name + status per step (no args/result). "
+        "Useful for overview questions on long traces.",
+    )
     add_common_opts(p)
     p.set_defaults(func=_cmd_target_timeline)
 

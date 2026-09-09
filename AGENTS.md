@@ -121,15 +121,15 @@ governs both.
    parse prose to recover identifiers already known to the CLI. Useful next
    actions should be grounded in available data — not generated diagnoses.
 
-### Command audit (as of Wave 3)
+### Command audit (as of Wave 5)
 
 | Command | Predictable | Bounded | Connected | Honest | Recoverable | Composable (JSON) |
 |---------|:-:|:-:|:-:|:-:|:-:|:-:|
-| `skeleton` | ✓ | ✓ | run IDs | ✓ | ✓ | ✓ structured |
+| `skeleton` | ✓ | ✓ `--errors-only` | run IDs | ✓ | ✓ | ✓ structured |
 | `narrative` | ✓ | ✓ truncation, `--from/--to/--around-step` | run IDs per step | ✓ | n/a | ✓ structured |
-| `run-detail` | ✓ | ✓ `--tool-calls-only` | parent/child refs | ✓ | ✓ suggests skeleton | ✓ structured |
-| `context-at` | ✓ step index | ✓ bounded preview, `--inputs-only/--outputs-only`, `--tool <id>`, `--full` | prev/next step, run-detail | ✓ inferred labels | ✓ lists valid steps, enforces `--from/--to` pairing | ✓ structured |
-| `target-timeline` | ✓ | ✓ truncation markers | run IDs per touch | ✓ | ✓ reports no matches | ✓ structured |
+| `run-detail` | ✓ | ✓ `--tool-calls-only`, `--inputs-only/--outputs-only` (mutually exclusive) | parent/child refs | ✓ | ✓ suggests skeleton | ✓ structured |
+| `context-at` | ✓ step index | ✓ bounded preview, `--inputs-only/--outputs-only` (mutually exclusive), `--tool <id>`, `--full` | prev/next step, run-detail | ✓ inferred labels | ✓ lists valid steps, enforces `--from/--to` pairing | ✓ structured |
+| `target-timeline` | ✓ | ✓ truncation markers, `--compact` | run IDs per touch | ✓ | ✓ reports no matches | ✓ structured |
 | `error-neighborhood` | ✓ | ✓ window-bounded | run IDs, next step | ✓ excludes infra-cancelled | n/a | ✓ structured |
 | `tool-metrics` | ✓ | ✓ | n/a (aggregate) | ✓ approximate labels | n/a | ✓ structured |
 | `context-metrics` | ✓ | ✓ | step indices | ✓ approximate labels | n/a | ✓ structured |
