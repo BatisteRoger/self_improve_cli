@@ -142,7 +142,8 @@ self-improve run-detail <trace_id> <run_id>  # L3: full content of one run
 | — | `compare` | Diff two traces (tokens, latency, skills) |
 | — | `skill-check` | Verify expected skill trigger (exit 0/1) |
 | — | `assess` | Attach task & outcome assessment to a trace |
-| — | `info` | Trace metadata, assessment, and TER stats |
+| — | `finding` | Persist analyst findings (add/list/remove/clear) |
+| — | `info` | Trace metadata, assessment, and findings summary |
 | — | `prompt pull/list/show/diff` | Manage local copies of LangSmith prompts |
 | — | `ati list/show` | Target agent architecture documents |
 | — | `doctor` | Local setup diagnostic (read-only) |
@@ -172,6 +173,7 @@ Available skills:
 - **navigate-traces** — question-to-view routing: which command answers which question
 - **analyze-agent** — systematic trace interpretation with structured findings report
 - **document-ati** — create architecture documents for target agents being analyzed
+- **improve-agent** — one iteration of the observe→diagnose→intervene→verify loop
 
 ```bash
 self-improve skill                 # list available skills

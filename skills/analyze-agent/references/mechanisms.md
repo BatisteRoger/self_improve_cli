@@ -1,7 +1,7 @@
 # Mechanism vocabulary for trace observations
 
 A controlled vocabulary for labeling what went wrong in a trace.
-Use these labels in the `primary_pattern` and `secondary_patterns` fields
+Use these labels in the `pattern` and `secondary_patterns` fields
 of each observation.
 
 This vocabulary is designed to evolve. As AI agents evolve and new failure
@@ -14,11 +14,11 @@ Each observation records multiple axes, not a single label:
 
 | Field | Question | Examples |
 | --- | --- | --- |
-| `primary_pattern` | What visibly went wrong? | `tool.ignored_feedback` |
+| `pattern` | What visibly went wrong? | `tool.ignored_feedback` |
 | `secondary_patterns` | Other patterns present? | `control.nonprogress_loop` |
 | `fault_locus` | Where to investigate repair? | `model`, `agent_harness`, `context` |
 | `impact` | What was the consequence? | `incorrect_result`, `resource_exhaustion` |
-| `evidence_status` | How certain is the diagnosis? | `observed`, `suspected`, `confirmed` |
+| `evidence_strength` | How certain is the diagnosis? | `observed`, `suspected`, `confirmed` |
 
 **Name the trace-observable pattern before inferring cause.**
 Write `tool.ignored_feedback: the agent continued after a 403 response`,
@@ -98,6 +98,56 @@ Where to investigate the repair. Always provisional unless confirmed.
 | --- | --- | --- |
 | `context.compaction_loss` | Context compaction retained actions but dropped the rationale/constraint that made them correct. Record `lost_element`: `rationale`, `constraint`, `approval`, `state` | `context.goal_drift` (loss vs drift) |
 
+### Mechanization (cost of cognition)
+
+The core question: **which thoughts could have been lookups?**
+
+When a model re-derives a rule, discovers a fact the system already knew,
+or parses structure out of prose, it converts a cheap, exact answer into an
+expensive, fallible one — paid in tokens, latency, error surface, and
+context space. These labels record *where* that happened. Whether the work
+*should* be mechanized (pre-fetched, encoded, validated, structured) is a
+judgment for the finding's Assessment — sometimes probabilistic
+flexibility is the right substrate. Default `fault_locus` to investigate:
+`agent_harness` or `tool_integration`, not `model`.
+
+| Label | Definition | Do not conflate with |
+| --- | --- | --- |
+| `context.unsupplied_fact` | A fact already known to the system (config, tool schema, permission, earlier-established state) was absent from context; the model spent tool calls or reasoning to obtain it | `observation.missed_evidence` (the fact WAS in context but ignored) |
+| `tool.probabilistic_discovery` | Model learned a deterministic constraint (schema field, enum value, permission boundary, required format) through a failed or probing tool call, instead of the constraint being encoded upfront | `recovery.failed_recovery` (here the model responds correctly to the error — the cost is that failure was the discovery channel) |
+| `tool.prose_payload` | Tool returned structured information as unstructured prose or unformatted text, forcing the model to re-parse what was already structured | `integration.translation_error` (nothing was corrupted — the format itself imposed the parsing) |
+| `context.redundant_derivation` | Model re-derived or re-read invariant information already established earlier in the trace while the target did not change. Verify the target was unchanged via `target-timeline` before labeling | `control.nonprogress_loop` (each call may return valid output — the waste is repeated derivation, not absence of progress) |
+
+## Candidate improvement vocabulary
+
+These labels go in the **Candidate improvement** field — never in
+`pattern`. They are solution-shaped: they name a harness change that
+*might* help, while the pattern field stays problem-shaped (what went
+wrong). All are candidates, not recommendations.
+
+The four labels below come from the SoL-Pi auto-research results
+(arXiv:2609.20519) — an empirically validated catalog of *cost-side* harness
+mechanisms that survived selection across thousands of runs and transferred
+across models. They cover the cost vertex only; quality-side frictions
+(bad error messages, ambiguous schemas, missing state visibility) keep
+their own problem labels and get their own candidate interventions.
+
+| Label | What it proposes | Triggering problem signals |
+| --- | --- | --- |
+| `harness.action_fusion` | Combine adjacent tool actions into single calls to cut turn overhead | Recurring adjacent call n-grams (edit→run→read); sequential independent calls |
+| `harness.context_compact` | Compact conversation history mid-trajectory when a subtask finishes | Monotonic context growth; high stale tool-result ratio; context jumps without compaction |
+| `harness.observation_pack` | Store large tool outputs, pass a handle + short summary, recall chunks on demand | Tool results > ~10 KB entering context verbatim; large payloads never re-referenced later |
+| `harness.evidence_reducer` | Let a smaller model + deterministic verifiers digest build/test output into verified receipts | Full build/test/lint logs passed verbatim to the frontier model |
+
+Caveats:
+
+- These mechanisms were selected on coding-agent harnesses; thresholds
+  (e.g. 10 KB) are the paper's, not universal constants. Check prevalence
+  in the trace before proposing.
+- Proposing a mechanism only makes sense if the target harness can support
+  it (e.g. `harness.observation_pack` requires offload-and-recall
+  capability). Record that uncertainty in the finding's Assessment.
+
 ## Discouraged terms
 
 These are too ambiguous for root-cause labels. Use the specific label instead.
@@ -112,16 +162,22 @@ These are too ambiguous for root-cause labels. Use the specific label instead.
 | `satisficing` | `control.premature_completion` |
 | `excessive agency` | `control.unconfirmed_action` or `control.unconfirmed_irreversible_action` |
 
+Note: some "Use instead" suggestions name candidate labels not yet defined
+in this vocabulary (e.g. `privacy_exposure`, `update.holdout_overfitting`).
+When you first need one, define it per "Adding new labels" below rather than
+using it undefined.
+
 ## Mapping from deterministic signals
 
 When the CLI's deterministic metrics flag a signal, use the corresponding
-canonical label as the `primary_pattern`:
+canonical label as the `pattern`:
 
 | Deterministic signal | Canonical label | Notes |
 | --- | --- | --- |
 | Oscillation (A→B→A alternation) | `control.nonprogress_loop` | Add `loop_trigger` and `iterations` |
 | Failed-command retry (same call after error) | `recovery.failed_recovery` | Add `recovery_mode=blind_retry` |
-| Repeated calls on same target (>3) | `tool.low_signal_arguments` or `control.nonprogress_loop` | Depends on whether the calls advance |
+| Constraint-revealing tool error, corrected call follows | `tool.probabilistic_discovery` | Only when the constraint was knowable upfront — check the tool schema and system prompt |
+| Repeated calls on same target (>3) | `tool.low_signal_arguments`, `control.nonprogress_loop`, or `context.redundant_derivation` | Depends on whether the calls advance and whether the target changed |
 | Context jump (>5K tokens between steps) | `context.compaction_loss` or informational | Only if a compaction event occurred |
 | Stale tool-result ratio > 40% | Informational — no canonical label | Measures age, not usefulness. Points to `context.*` investigation |
 | Monotonic context growth | Informational — no canonical label | Points to `context.*` investigation |
@@ -136,4 +192,4 @@ When you observe a pattern not covered by this vocabulary:
 4. Use it in observations and note whether it recurs
 
 This vocabulary grows with experience. A pattern seen once is a hypothesis;
-the same `primary_pattern` seen across traces is a confirmed mechanism.
+the same `pattern` seen across traces is a confirmed mechanism.

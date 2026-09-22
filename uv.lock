@@ -1341,6 +1341,7 @@ dependencies = [
 
 [package.optional-dependencies]
 dev = [
+    { name = "httpx" },
     { name = "pyright" },
     { name = "pytest" },
     { name = "ruff" },
@@ -1354,6 +1355,7 @@ privacy = [
 
 [package.metadata]
 requires-dist = [
+    { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.24" },
     { name = "langsmith", marker = "extra == 'langsmith'", specifier = ">=0.3.1" },
     { name = "presidio", marker = "extra == 'privacy'", specifier = ">=2.2.361" },
     { name = "pyright", marker = "extra == 'dev'" },

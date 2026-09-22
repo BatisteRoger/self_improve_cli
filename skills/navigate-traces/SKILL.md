@@ -35,6 +35,7 @@ a template.
 | "Did compaction drop the user's constraint?" | `context-metrics` (look for a drop) | `run-detail` on the LLM steps before/after the drop |
 | "What supports the final claim?" | `narrative` (find the claim) | `run-detail --outputs-only` on the last LLM run |
 | "Where did this become expensive?" | `context-metrics` growth curve | `tool-metrics` for attribution, then `run-detail` on the largest contributor |
+| "Could this work have been mechanical?" | `context-at` for the step (was the answer already knowable?) | `run-detail` on the tool run (constraint in the error vs in the schema); `target-timeline` (did the target change?) |
 | "Is this trace clean?" | `skeleton --errors-only` (quick triage) | `tool-metrics` and `context-metrics` for redundancy/anomalies, `error-neighborhood` for error recovery |
 | "Did the agent recover from that error?" | `error-neighborhood` | `run-detail` on the error and the next step |
 | "What should I inspect next?" | The signal you already have (a metric, a run ID) | A specific run reference, not a generic checklist |
@@ -61,7 +62,9 @@ calls to fill a template.
 
 When you have your evidence, write a findings report using the format
 described in the `analyze-agent` skill (Finding, Evidence, Assessment,
-Likely locus, Suggested next action, Candidate improvement, Validation).
+Likely locus, Suggested next action, Candidate improvement, Validation),
+and persist each finding with `self-improve finding add` so it survives
+the session.
 
 ## Reference: the view ladder
 

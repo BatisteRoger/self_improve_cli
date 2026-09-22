@@ -46,6 +46,7 @@ dev = [
   "ruff",
   "pytest>=9.0.2",
   "pyright",
+  "httpx>=0.24",  # tests construct real httpx.Response for langsmith error types
 ]
 
 [project.scripts]
