@@ -8,6 +8,12 @@ Self-improve CLI is an open-source Python tool that turns raw AI-agent traces in
 
 The CLI produces representations and metrics. It does not propose or apply improvements itself. Interpretation and action stay with the analyst and the human reviewer.
 
+## Scope and direction
+
+**Agent-agnostic.** The CLI must work on any traced agent — nothing in the core, commands, or bundled skills may assume a specific company, product, or harness. Domain knowledge about a specific target agent lives in ATI documents (`document-ati` skill, `ati` commands). Organization-specific workflows live outside this repo (e.g. an internal skill library that orchestrates this CLI), never inside it.
+
+**Direction: single-trace diagnostic first, then the improvement loop.** The long-term shape is a loop — run task → fetch trace → diagnose → persist findings → candidate intervention → re-run → compare → receipt. Features that persist analyst state (`assess`, `finding`) exist so the loop has memory across iterations and sessions. The CLI stays read-side throughout: it produces evidence and evaluation receipts; proposing and applying changes stays with the analyst agent and the human reviewer.
+
 ## Core concepts
 
 - **Target Agent**: the agent whose executions are being analyzed. Its traces are the evidence.
@@ -71,13 +77,13 @@ looking at the entire trace in context.
 
 Dependency direction: `source -> canonical model -> privacy/storage -> deterministic analysis -> CLI`. No reverse dependency from the core to any specific provider.
 
-- `domain/` — canonical trace, run, message, and artifact types; schema versioning and validation.
+- `domain/` — canonical trace, run, message, and artifact types; schema versioning and validation. `trace.py` (model), `records.py` (analyst assessments + findings).
 - `sources/` — a `TraceSource` protocol plus the initial LangSmith adapter. SDK-specific objects stop at this boundary.
 - `privacy/` — anonymization policy, recognizers, placeholder mapping, and sanitization reports. Internally split into `patterns` (regex), `presidio_adapter` (NLP), `placeholders` (stable mapping), `report` (summary), and `redact` (recursive application + backend merge).
-- `storage/` — safe local artifact layout, atomic writes, metadata, and raw-retention controls.
-- `representations/` — deterministic L0/L1/L2/L3 TER builders over canonical sanitized data.
+- `storage/` — safe local artifact layout, atomic writes, metadata, and raw-retention controls. `base.py` (paths + serialization) plus per-area mixins: `traces`, `records`, `ter`, `prompts`, `ati`; `TraceStore` composes them.
+- `representations/` — deterministic L0/L1/L2/L3 TER builders over canonical sanitized data. One module per view (`skeleton`, `narrative`, `run_detail`, `context_at`, `navigation`, `tools`) over `common` helpers; `ter.py` writes all derived files. Public names re-exported from `__init__.py`.
 - `metrics/` — tool, context, and skill metrics, each labeled with its approximation and assumptions.
-- `cli/` — command parsing, stable exit codes, stdout/stderr rules, Markdown/JSON output, and agent-oriented help.
+- `cli/` — command parsing, stable exit codes, stdout/stderr rules, Markdown/JSON output, and agent-oriented help. `main.py` is a thin entry point; handlers and parser registration live per command family in `common` (shared plumbing), `discovery`, `views`, `metrics`, `records`, `prompts`, `ati`, `system`. Each module exposes `register(sub)`.
 
 Keep the core representation and metrics layers free of network calls and LLM calls. This preserves recomputability and makes them easy to test.
 
@@ -138,6 +144,7 @@ governs both.
 | `compare` | ✓ | ✓ | trace IDs | ✓ | n/a | ✓ structured |
 | `skill-check` | ✓ | ✓ | n/a | ✓ | ✓ suggests skill-metrics | ✓ structured |
 | `assess` | ✓ | ✓ | n/a | ✓ | ✓ suggests `--task` | JSON in both formats |
+| `finding` | ✓ subcommands like `ati`/`prompt` | ✓ compact list, JSON for full | finding IDs, run IDs in evidence | ✓ free-string pattern/locus documented | ✓ suggests `finding list` | ✓ structured |
 | `info` | ✓ | ✓ | n/a | ✓ | ✓ | JSON in both formats |
 
 Gaps (deferred or low-impact):
@@ -232,6 +239,40 @@ depending on the task and its outcome.
 
 "No verification is visible in this trace" is different from "the change is
 incorrect." Keep unknown outcomes explicitly unknown.
+
+### Persisted findings
+
+`assess` records the task & outcome; `finding` records the evidence-backed
+observations the analyst produces. Findings persist as `findings.json`
+alongside the trace — they are the memory that turns single-trace
+diagnostics into cross-trace patterns (a pattern seen once is a hypothesis;
+seen across traces it is a mechanism).
+
+```bash
+self-improve finding add <trace_id> --title "Agent continued after a 403" \
+  --pattern tool.ignored_feedback --impact incorrect_result \
+  --strength confirmed --axis quality --locus model \
+  --evidence "run-9: 403 response" --evidence "run-10: success claimed" \
+  --candidate harness.fail_on_auth_error --validation "Re-run the same task"
+
+self-improve finding list <trace_id>       # compact list; --format json for full records
+self-improve finding remove <trace_id> f1
+self-improve finding clear <trace_id>
+```
+
+- `--impact`: `incorrect_result` | `unverified_completion` | `external_side_effect` | `resource_exhaustion` | `no_impact`
+- `--strength`: `observed` | `suspected` | `confirmed`
+- `--axis`: `quality` | `cost` | `speed`
+- `--pattern`, `--secondary-pattern`, `--locus`: free strings — the
+  vocabulary in `skills/analyze-agent/references/mechanisms.md` is living
+  and deliberately not enforced at the CLI boundary.
+- `--evidence` and `--secondary-pattern` are repeatable.
+- Optional context fields: `--assessment`, `--next`, `--candidate`,
+  `--validation` — they mirror the findings-report format in the
+  `analyze-agent` skill.
+
+Finding IDs are sequential (`f1`, `f2`, ...) so reports and later commands
+can cite them stably. `info` reports the findings count and IDs.
 
 ### Anonymizer backend
 

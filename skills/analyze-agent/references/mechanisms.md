@@ -118,6 +118,36 @@ flexibility is the right substrate. Default `fault_locus` to investigate:
 | `tool.prose_payload` | Tool returned structured information as unstructured prose or unformatted text, forcing the model to re-parse what was already structured | `integration.translation_error` (nothing was corrupted — the format itself imposed the parsing) |
 | `context.redundant_derivation` | Model re-derived or re-read invariant information already established earlier in the trace while the target did not change. Verify the target was unchanged via `target-timeline` before labeling | `control.nonprogress_loop` (each call may return valid output — the waste is repeated derivation, not absence of progress) |
 
+## Candidate improvement vocabulary
+
+These labels go in the **Candidate improvement** field — never in
+`primary_pattern`. They are solution-shaped: they name a harness change that
+*might* help, while the pattern field stays problem-shaped (what went
+wrong). All are candidates, not recommendations.
+
+The four labels below come from the SoL-Pi auto-research results
+(arXiv:2609.20519) — an empirically validated catalog of *cost-side* harness
+mechanisms that survived selection across thousands of runs and transferred
+across models. They cover the cost vertex only; quality-side frictions
+(bad error messages, ambiguous schemas, missing state visibility) keep
+their own problem labels and get their own candidate interventions.
+
+| Label | What it proposes | Triggering problem signals |
+| --- | --- | --- |
+| `harness.action_fusion` | Combine adjacent tool actions into single calls to cut turn overhead | Recurring adjacent call n-grams (edit→run→read); sequential independent calls |
+| `harness.context_compact` | Compact conversation history mid-trajectory when a subtask finishes | Monotonic context growth; high stale tool-result ratio; context jumps without compaction |
+| `harness.observation_pack` | Store large tool outputs, pass a handle + short summary, recall chunks on demand | Tool results > ~10 KB entering context verbatim; large payloads never re-referenced later |
+| `harness.evidence_reducer` | Let a smaller model + deterministic verifiers digest build/test output into verified receipts | Full build/test/lint logs passed verbatim to the frontier model |
+
+Caveats:
+
+- These mechanisms were selected on coding-agent harnesses; thresholds
+  (e.g. 10 KB) are the paper's, not universal constants. Check prevalence
+  in the trace before proposing.
+- Proposing a mechanism only makes sense if the target harness can support
+  it (e.g. `harness.observation_pack` requires offload-and-recall
+  capability). Record that uncertainty in the finding's Assessment.
+
 ## Discouraged terms
 
 These are too ambiguous for root-cause labels. Use the specific label instead.

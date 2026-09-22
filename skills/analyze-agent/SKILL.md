@@ -129,6 +129,15 @@ Produce a small number of findings (typically 1–5), ranked by consequence
 and evidence strength. Not every trace has a problem — "no supported
 finding" is a valid and honest outcome.
 
+Persist each finding so it outlives the session — cross-trace prevalence is
+what turns a hypothesis into a confirmed mechanism:
+
+```bash
+self-improve finding add <trace_id> --title "..." --pattern <label> \
+  --impact ... --strength ... --axis ... --locus ... \
+  --evidence "<run_id>: what it shows" --candidate "..." --validation "..."
+```
+
 ### Finding format
 
 ```markdown
