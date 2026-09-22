@@ -373,6 +373,7 @@ databases. See `cli/doctor.py` for the full check list and scope honesty notes.
 - Add or update tests for behavior changes, using synthetic data only.
 - Update user-facing documentation when the CLI contract changes.
 - Run the relevant formatter, linter, type checker, and tests before declaring a change complete. Specifically: `uv run pytest`, `uv run ruff check src tests`, `uv run ruff format --check src tests`, and `uv run pyright src`.
+- CI (`.github/workflows/ci.yml`) runs the same four commands on ubuntu+windows × Python 3.12/3.13 after `uv sync --extra langsmith --extra dev`. To reproduce CI locally, sync the same extras first. A test that fails locally will fail CI — never dismiss a failure as "environment" without confirming it on a clean `uv sync`.
 - Keep changes focused and reviewable; do not rewrite unrelated files.
 - Label heuristic metrics as approximate in their output and docstrings.
 - Use as few special characters as practical in authored CLI output and documentation. Special characters may still arrive through user conversations or trace content and must be handled robustly — never crash on an unencodable code point.
