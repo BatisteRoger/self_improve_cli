@@ -58,6 +58,7 @@ Common question types:
 - "Did compaction drop the user's constraint?"
 - "What supports the final claim?"
 - "Where did this become expensive?"
+- "Could this work have been mechanical?"
 - "Is this trace clean?"
 
 ## Step 2: Retrieve evidence (question-driven)
@@ -81,6 +82,7 @@ Then, depending on the question:
 | "Did compaction drop the constraint?" | `context-metrics` (look for a drop) | `context-at --from N --to M` across the drop |
 | "What supports the final claim?" | `narrative` (find the claim) | `run-detail --outputs-only` on the last LLM run |
 | "Where did this become expensive?" | `context-metrics` growth curve | `tool-metrics` for attribution |
+| "Could this work have been mechanical?" | `context-at` for the step (was the answer already knowable?) | `run-detail` on the tool run (constraint in the error vs in the schema); `target-timeline` (did the target change?) |
 | "Is this trace clean?" | `skeleton --errors-only` (quick triage) | `tool-metrics`, `context-metrics`, `error-neighborhood` |
 | "Did the agent recover from that error?" | `error-neighborhood` | `run-detail` on the error and the next step |
 
@@ -231,6 +233,12 @@ See `references/mechanisms.md` for the full vocabulary of trace-observable
 patterns, fault loci, impact values, evidence status levels, and
 discouraged terms. Use these canonical labels in the **Pattern** field of
 each finding.
+
+The mechanization labels (`context.unsupplied_fact`,
+`tool.probabilistic_discovery`, `tool.prose_payload`,
+`context.redundant_derivation`) answer one question: *which thoughts could
+have been lookups?* They point at harness and tool fixes — pre-fetching a
+fact, encoding a rule, returning structured data — not at model faults.
 
 ## Diagnostic benchmark
 
