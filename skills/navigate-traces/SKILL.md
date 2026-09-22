@@ -62,7 +62,9 @@ calls to fill a template.
 
 When you have your evidence, write a findings report using the format
 described in the `analyze-agent` skill (Finding, Evidence, Assessment,
-Likely locus, Suggested next action, Candidate improvement, Validation).
+Likely locus, Suggested next action, Candidate improvement, Validation),
+and persist each finding with `self-improve finding add` so it survives
+the session.
 
 ## Reference: the view ladder
 

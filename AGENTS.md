@@ -151,9 +151,10 @@ Gaps (deferred or low-impact):
 
 - `tools` (overview/detail) still returns markdown-wrapped JSON. Low
   priority — the matrix is inherently tabular.
-- `assess` and `info` output pretty-printed JSON in both `--format markdown`
-  and `--format json` modes (no human-readable markdown representation).
-  By design — these are structured metadata, not narrative content.
+- `assess`, `info`, and `finding add` output pretty-printed JSON in both
+  `--format markdown` and `--format json` modes (no human-readable
+  markdown representation). By design — these are structured metadata,
+  not narrative content.
 
 ### Merge checklist for new commands
 

@@ -143,7 +143,7 @@ self-improve run-detail <trace_id> <run_id>  # L3: full content of one run
 | — | `skill-check` | Verify expected skill trigger (exit 0/1) |
 | — | `assess` | Attach task & outcome assessment to a trace |
 | — | `finding` | Persist analyst findings (add/list/remove/clear) |
-| — | `info` | Trace metadata, assessment, and TER stats |
+| — | `info` | Trace metadata, assessment, and findings summary |
 | — | `prompt pull/list/show/diff` | Manage local copies of LangSmith prompts |
 | — | `ati list/show` | Target agent architecture documents |
 | — | `doctor` | Local setup diagnostic (read-only) |

@@ -1,7 +1,7 @@
 # Mechanism vocabulary for trace observations
 
 A controlled vocabulary for labeling what went wrong in a trace.
-Use these labels in the `primary_pattern` and `secondary_patterns` fields
+Use these labels in the `pattern` and `secondary_patterns` fields
 of each observation.
 
 This vocabulary is designed to evolve. As AI agents evolve and new failure
@@ -14,11 +14,11 @@ Each observation records multiple axes, not a single label:
 
 | Field | Question | Examples |
 | --- | --- | --- |
-| `primary_pattern` | What visibly went wrong? | `tool.ignored_feedback` |
+| `pattern` | What visibly went wrong? | `tool.ignored_feedback` |
 | `secondary_patterns` | Other patterns present? | `control.nonprogress_loop` |
 | `fault_locus` | Where to investigate repair? | `model`, `agent_harness`, `context` |
 | `impact` | What was the consequence? | `incorrect_result`, `resource_exhaustion` |
-| `evidence_status` | How certain is the diagnosis? | `observed`, `suspected`, `confirmed` |
+| `evidence_strength` | How certain is the diagnosis? | `observed`, `suspected`, `confirmed` |
 
 **Name the trace-observable pattern before inferring cause.**
 Write `tool.ignored_feedback: the agent continued after a 403 response`,
@@ -121,7 +121,7 @@ flexibility is the right substrate. Default `fault_locus` to investigate:
 ## Candidate improvement vocabulary
 
 These labels go in the **Candidate improvement** field — never in
-`primary_pattern`. They are solution-shaped: they name a harness change that
+`pattern`. They are solution-shaped: they name a harness change that
 *might* help, while the pattern field stays problem-shaped (what went
 wrong). All are candidates, not recommendations.
 
@@ -162,10 +162,15 @@ These are too ambiguous for root-cause labels. Use the specific label instead.
 | `satisficing` | `control.premature_completion` |
 | `excessive agency` | `control.unconfirmed_action` or `control.unconfirmed_irreversible_action` |
 
+Note: some "Use instead" suggestions name candidate labels not yet defined
+in this vocabulary (e.g. `privacy_exposure`, `update.holdout_overfitting`).
+When you first need one, define it per "Adding new labels" below rather than
+using it undefined.
+
 ## Mapping from deterministic signals
 
 When the CLI's deterministic metrics flag a signal, use the corresponding
-canonical label as the `primary_pattern`:
+canonical label as the `pattern`:
 
 | Deterministic signal | Canonical label | Notes |
 | --- | --- | --- |
@@ -187,4 +192,4 @@ When you observe a pattern not covered by this vocabulary:
 4. Use it in observations and note whether it recurs
 
 This vocabulary grows with experience. A pattern seen once is a hypothesis;
-the same `primary_pattern` seen across traces is a confirmed mechanism.
+the same `pattern` seen across traces is a confirmed mechanism.
