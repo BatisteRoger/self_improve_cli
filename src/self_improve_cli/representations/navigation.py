@@ -7,8 +7,8 @@ from typing import Any
 
 from self_improve_cli.domain import Run, RunType
 from self_improve_cli.representations.common import (
-    _INFRA_ERROR_MARKERS,
     _MAX_TOOL_CHARS,
+    _is_infra_error,
     _tool_result_text,
     _truncate,
     significant_runs,
@@ -124,9 +124,7 @@ def target_timeline_data(runs: list[Run], target: str, *, compact: bool = False)
 
 def _is_infra_cancelled(error: str | None) -> bool:
     """Check if an error is an infra-cancelled (not an agent failure)."""
-    if not error:
-        return False
-    return any(marker in error for marker in _INFRA_ERROR_MARKERS)
+    return bool(error) and _is_infra_error(error)
 
 
 def error_neighborhood(runs: list[Run], *, window: int = 1) -> str:

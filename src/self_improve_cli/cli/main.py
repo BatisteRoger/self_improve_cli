@@ -11,7 +11,7 @@ Agent-first design:
 This module is deliberately thin: command handlers and their argparse
 registration live in per-family modules — `discovery` (list/fetch), `views`
 (trace representations), `metrics`, `records` (info/assess/finding),
-`prompts`, `ati`, `system` (skill/init/doctor). Shared plumbing (exit codes,
+`system` (skill/init/doctor), `prompts`, `ati`. Shared plumbing (exit codes,
 store construction, output formatting) lives in `common`.
 """
 

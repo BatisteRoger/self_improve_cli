@@ -39,7 +39,7 @@ class RecordsMixin(StoreBase):
             return None
         data = json.loads(path.read_text(encoding="utf-8"))
         return Assessment(
-            trace_id=data["trace_id"],
+            trace_id=data.get("trace_id", trace_id),
             task=data.get("task", ""),
             outcome=OutcomeStatus(data.get("outcome", "unknown")),
             outcome_source=OutcomeSource(data.get("outcome_source", "unknown")),
@@ -69,7 +69,7 @@ class RecordsMixin(StoreBase):
         data = json.loads(path.read_text(encoding="utf-8"))
         return [
             Finding(
-                id=f["id"],
+                id=f.get("id", ""),
                 trace_id=f.get("trace_id", trace_id),
                 title=f.get("title", ""),
                 pattern=f.get("pattern", ""),
