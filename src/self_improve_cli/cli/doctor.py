@@ -362,4 +362,10 @@ def format_report_markdown(report: DoctorReport) -> str:
             if c.remedy:
                 lines.append(f"  - Remedy: {c.remedy}")
 
+    lines.append("")
+    lines.append(
+        "Analyst agent? Run the `get-started` skill "
+        "(`self-improve skill get-started`) — it lists the harness "
+        "capabilities this environment check cannot see."
+    )
     return "\n".join(lines)
