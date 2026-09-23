@@ -16,7 +16,7 @@ The CLI produces representations and metrics. It does not propose or apply impro
 
 ## Core concepts
 
-- **Target Agent**: the agent whose executions are being analyzed. Its traces are the evidence.
+- **Target Agent**: the agent whose executions are being analyzed. Its traces are the evidence. Sometimes called Agent to Improve or ATI (deprecated terms).
 - **Analyst Agent**: the agent, or human-assisted workflow, that uses this CLI to inspect traces and form observations.
 - **Trace**: one end-to-end operation, composed of runs.
 - **Run**: one unit of work, such as an LLM call or tool call.
