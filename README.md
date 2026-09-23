@@ -97,6 +97,22 @@ The CLI produces representations and metrics. It does not propose or apply
 improvements itself. Interpretation and action stay with the analyst and the
 human reviewer.
 
+### What the analyst agent needs
+
+The only hard requirement is something that can invoke the CLI — a human
+relaying commands works. Each additional capability unlocks more:
+
+- **Shell execution** — the baseline for autonomous use.
+- **Filesystem writes** — persisted findings and assessments under `data/`,
+  i.e. memory across sessions.
+- **LangSmith access** — `fetch`/`list`; without it, only already-fetched
+  traces can be analyzed.
+- **A way to run the target agent and apply (or hand off) changes** — closes
+  the full observe→diagnose→intervene→verify loop; without it the analyst
+  can diagnose but not iterate.
+
+The `get-started` skill walks an analyst agent through this self-check.
+
 ## Install
 
 > **Note:** not yet published on PyPI — install from git for now.
@@ -170,6 +186,7 @@ npx skills add BatisteRoger/self_improve_cli
 
 Available skills:
 
+- **get-started** — first read: capability self-check, setup verification, skill routing
 - **navigate-traces** — question-to-view routing: which command answers which question
 - **analyze-agent** — systematic trace interpretation with structured findings report
 - **document-ati** — create architecture documents for target agents being analyzed
