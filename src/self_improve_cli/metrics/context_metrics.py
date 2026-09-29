@@ -15,6 +15,8 @@ stale tool-result ratio is a position-based proxy. See notes in each section.
 from __future__ import annotations
 
 import json
+import os.path
+from statistics import median
 from typing import Any
 
 from self_improve_cli.domain import Run, RunType
@@ -169,6 +171,83 @@ def stale_tool_result_ratio(runs: list[Run], k: int = _STALE_TOOL_RESULT_K) -> l
 dead_context_ratio = stale_tool_result_ratio
 
 
+# --- 2b. Prefix invariance (approximate) -------------------------------------
+
+
+def _serialize_input(run: Run) -> str:
+    """Deterministic serialization of an LLM run's input for prefix comparison.
+
+    One block per message as `role\ntext`, joined by blank lines. Tool-call
+    JSON is excluded: the prefix mostly lives in leading messages (system,
+    first human), and text alone is enough to detect divergence.
+    """
+    return "\n\n".join(f"{msg.role}\n{msg.text}" for msg in run.input_messages)
+
+
+def _common_prefix_chars(a: str, b: str) -> int:
+    return len(os.path.commonprefix((a, b)))
+
+
+def _prefix_invariance(sig: list[Run]) -> list[dict[str, Any]]:
+    """Shared input prefix vs earlier main-loop LLM steps (APPROXIMATE).
+
+    For each step i >= 1, computes the *longest* char-level common prefix of
+    its serialized input against all earlier steps — adjacent-step comparison
+    alone misses re-paid content in multi-node graphs where different nodes
+    (each with its own system prompt) interleave on the main loop. Char-level
+    (not message-level) so a dynamic field inside the system message (e.g.
+    user context) does not collapse the whole prefix to zero.
+
+    Interpretation bounds: shared prefix is the *upper bound* of invariant
+    content re-paid each step — constant tool schemas (in `overhead`) add an
+    unknown amount. It also approximates provider prefix-cache reuse without
+    proving caching occurred.
+
+    Returns one dict per step: {step_index, shared_prefix_chars,
+    shared_prefix_tokens, share} — share is None for step 0 (baseline).
+    """
+    llm_runs = _main_loop_llm_runs(sig)
+    if not llm_runs:
+        return []
+    serialized = [_serialize_input(r) for r in llm_runs]
+    results: list[dict[str, Any]] = [
+        {"step_index": 0, "shared_prefix_chars": None, "shared_prefix_tokens": None, "share": None}
+    ]
+    for i in range(1, len(llm_runs)):
+        chars = max(
+            _common_prefix_chars(serialized[j], serialized[i]) for j in range(i)
+        )
+        tokens = _estimate_tokens(serialized[i][:chars])
+        prompt = _context_tokens(llm_runs[i])
+        results.append(
+            {
+                "step_index": i,
+                "shared_prefix_chars": chars,
+                "shared_prefix_tokens": tokens,
+                "share": round(tokens / prompt, 2) if prompt else None,
+            }
+        )
+    return results
+
+
+def prefix_invariance(runs: list[Run]) -> dict[str, Any]:
+    """Prefix invariance data: per-step shared prefix + trace aggregate.
+
+    `repaid_tokens` sums shared prefixes across steps — the approximated
+    volume of input re-submitted on each main-loop call that had already
+    appeared in an earlier step.
+    """
+    sig = significant_runs(runs)
+    per_step = _prefix_invariance(sig)
+    shares = [s["share"] for s in per_step if s["share"] is not None]
+    repaid = sum(s["shared_prefix_tokens"] or 0 for s in per_step)
+    return {
+        "steps": per_step,
+        "median_share": round(median(shares), 2) if shares else None,
+        "repaid_tokens": repaid,
+    }
+
+
 # --- 3. Growth curve --------------------------------------------------------
 
 
@@ -276,6 +355,32 @@ def build_context_metrics(runs: list[Run]) -> str:
             "",
         ]
 
+        # 1b. Prefix invariance
+        invariance = _prefix_invariance(sig)
+        if len(invariance) > 1:
+            sections += ["## Static context (prefix invariance)", ""]
+            for s in invariance[1:]:
+                share = f"{int(s['share'] * 100)}%" if s["share"] is not None else "n/a"
+                sections.append(
+                    f"Step {s['step_index']:3d} | shared_prefix: "
+                    f"{_fmt_k(s['shared_prefix_tokens'])} ({share} of "
+                    f"{_context_tokens(llm_runs[s['step_index']]):,} prompt tokens)"
+                )
+            shares = [s["share"] for s in invariance[1:] if s["share"] is not None]
+            repaid = sum(s["shared_prefix_tokens"] or 0 for s in invariance)
+            median_str = f"{int(median(shares) * 100)}%" if shares else "n/a"
+            sections += [
+                "",
+                f"Median share: {median_str} | "
+                f"~{_fmt_k(repaid)} tokens re-paid across {len(invariance) - 1} steps",
+                "",
+                "Note: APPROXIMATE — longest char-level common prefix between this step's "
+                "input and any earlier step's, chars/4. Upper bound of content re-paid per "
+                "step; constant tool schemas add an unknown amount. Approximates provider "
+                "prefix-cache reuse — does not prove caching occurred.",
+                "",
+            ]
+
     # 2. Growth curve
     curve = _growth_curve(sig)
     if curve["steps"]:
@@ -334,6 +439,7 @@ def context_metrics_data(runs: list[Run]) -> dict[str, Any]:
     return {
         "trace_id": trace_id,
         "token_decomposition": steps,
+        "prefix_invariance": prefix_invariance(runs),
         "growth_curve": curve,
         "notes": {
             "token_categories": "chars/4 estimates (APPROXIMATE)",
@@ -343,5 +449,9 @@ def context_metrics_data(runs: list[Run]) -> dict[str, Any]:
                 "Measures age, not usefulness."
             ),
             "growth_curve": "Nested-LLM runs (tools spawning their own LLM) are excluded.",
+            "prefix_invariance": (
+                "Longest char-level common prefix between a step's input and any earlier "
+                "step's, chars/4 (APPROXIMATE). Upper bound of content re-paid per step."
+            ),
         },
     }

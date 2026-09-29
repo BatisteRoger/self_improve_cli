@@ -82,6 +82,7 @@ Then, depending on the question:
 | "Did compaction drop the constraint?" | `context-metrics` (look for a drop) | `context-at --from N --to M` across the drop |
 | "What supports the final claim?" | `narrative` (find the claim) | `run-detail --outputs-only` on the last LLM run |
 | "Where did this become expensive?" | `context-metrics` growth curve | `tool-metrics` for attribution |
+| "How much context is re-paid per step?" | `context-metrics` static context section | `run-detail --inputs-only` on a high-share step to see the prefix |
 | "Could this work have been mechanical?" | `context-at` for the step (was the answer already knowable?) | `run-detail` on the tool run (constraint in the error vs in the schema); `target-timeline` (did the target change?) |
 | "Is this trace clean?" | `skeleton --errors-only` (quick triage) | `tool-metrics`, `context-metrics`, `error-neighborhood` |
 | "Did the agent recover from that error?" | `error-neighborhood` | `run-detail` on the error and the next step |

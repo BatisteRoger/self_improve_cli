@@ -97,6 +97,7 @@ Where to investigate the repair. Always provisional unless confirmed.
 | Label | Definition | Do not conflate with |
 | --- | --- | --- |
 | `context.compaction_loss` | Context compaction retained actions but dropped the rationale/constraint that made them correct. Record `lost_element`: `rationale`, `constraint`, `approval`, `state` | `context.goal_drift` (loss vs drift) |
+| `context.invariant_repay` | A large share of each step's input is identical to an earlier step's — static system prompt, persona, or catalog descriptions re-paid every turn. Detect via `context-metrics` prefix-invariance section | `context.redundant_derivation` (the model re-derives at inference time; here the harness re-submits the same tokens — the cost is upstream of the model) |
 
 ### Mechanization (cost of cognition)
 
@@ -138,6 +139,7 @@ their own problem labels and get their own candidate interventions.
 | `harness.context_compact` | Compact conversation history mid-trajectory when a subtask finishes | Monotonic context growth; high stale tool-result ratio; context jumps without compaction |
 | `harness.observation_pack` | Store large tool outputs, pass a handle + short summary, recall chunks on demand | Tool results > ~10 KB entering context verbatim; large payloads never re-referenced later |
 | `harness.evidence_reducer` | Let a smaller model + deterministic verifiers digest build/test output into verified receipts | Full build/test/lint logs passed verbatim to the frontier model |
+| `harness.static_prompt_tax` | Slim the invariant prompt layer: move rarely-needed detail to progressive disclosure, trim catalog/tool descriptions, split prompts by intent, strip generic middleware boilerplate | High prefix-invariance share across main-loop steps; a large stable `system` category re-submitted at every step |
 
 Caveats:
 
@@ -181,6 +183,7 @@ canonical label as the `pattern`:
 | Context jump (>5K tokens between steps) | `context.compaction_loss` or informational | Only if a compaction event occurred |
 | Stale tool-result ratio > 40% | Informational — no canonical label | Measures age, not usefulness. Points to `context.*` investigation |
 | Monotonic context growth | Informational — no canonical label | Points to `context.*` investigation |
+| High prefix-invariance share across steps | `context.invariant_repay` or informational | Re-paid tokens may be intentional (stable persona, compliance blocks) — weigh against the task before labeling |
 
 ## Adding new labels
 

@@ -3,7 +3,9 @@
 from self_improve_cli.domain import Message, ToolCall
 from self_improve_cli.metrics.context_metrics import (
     build_context_metrics,
+    context_metrics_data,
     growth_curve,
+    prefix_invariance,
     stale_tool_result_ratio,
     token_decomposition,
 )
@@ -164,3 +166,94 @@ def test_build_context_metrics_contains_sections():
     md = build_context_metrics(runs)
     assert "# Context Metrics" in md
     assert "## Growth curve" in md
+
+
+def test_prefix_invariance_empty_and_single_step():
+    assert prefix_invariance([]) == {"steps": [], "median_share": None, "repaid_tokens": 0}
+    runs = [make_root(), make_llm("1", prompt_tokens=100)]
+    inv = prefix_invariance(runs)
+    assert len(inv["steps"]) == 1
+    assert inv["steps"][0]["share"] is None
+    assert inv["median_share"] is None
+
+
+def test_prefix_invariance_shared_prefix():
+    runs = [
+        make_root(),
+        make_llm(
+            "1",
+            prompt_tokens=100,
+            input_messages=[make_msg("system", "SYS"), make_msg("human", "Q")],
+        ),
+        make_llm(
+            "2",
+            prompt_tokens=200,
+            input_messages=[
+                make_msg("system", "SYS"),
+                make_msg("human", "Q"),
+                make_msg("ai", "answer"),
+                make_msg("human", "Q2"),
+            ],
+        ),
+    ]
+    inv = prefix_invariance(runs)
+    step1 = inv["steps"][1]
+    expected_chars = len("system\nSYS\n\nhuman\nQ")
+    assert step1["shared_prefix_chars"] == expected_chars
+    assert step1["shared_prefix_tokens"] == expected_chars // 4
+    assert step1["share"] == round((expected_chars // 4) / 200, 2)
+    assert inv["repaid_tokens"] == expected_chars // 4
+    assert inv["median_share"] == step1["share"]
+
+
+def test_prefix_invariance_mid_message_divergence():
+    runs = [
+        make_root(),
+        make_llm(
+            "1",
+            prompt_tokens=400,
+            input_messages=[make_msg("system", "SYS user=alice tail")],
+        ),
+        make_llm(
+            "2",
+            prompt_tokens=400,
+            input_messages=[make_msg("system", "SYS user=bob tail")],
+        ),
+    ]
+    inv = prefix_invariance(runs)
+    step1 = inv["steps"][1]
+    # Char-level keeps the common head of the system message; message-level
+    # matching would report zero here.
+    assert step1["shared_prefix_chars"] == len("system\nSYS user=")
+    assert step1["shared_prefix_tokens"] > 0
+
+
+def test_prefix_invariance_rebuilt_context():
+    runs = [
+        make_root(),
+        make_llm(
+            "1",
+            prompt_tokens=400,
+            input_messages=[make_msg("system", "AAA"), make_msg("human", "one")],
+        ),
+        make_llm(
+            "2",
+            prompt_tokens=400,
+            input_messages=[make_msg("system", "ZZZ"), make_msg("human", "two")],
+        ),
+    ]
+    inv = prefix_invariance(runs)
+    assert inv["steps"][1]["shared_prefix_chars"] == len("system\n")
+    assert inv["steps"][1]["share"] == 0.0
+
+
+def test_context_metrics_data_has_prefix_invariance():
+    runs = [
+        make_root(),
+        make_llm("1", prompt_tokens=100, input_messages=[make_msg("system", "SYS")]),
+        make_llm("2", prompt_tokens=200, input_messages=[make_msg("system", "SYS")]),
+    ]
+    data = context_metrics_data(runs)
+    assert "prefix_invariance" in data
+    assert len(data["prefix_invariance"]["steps"]) == 2
+    assert "## Static context" in build_context_metrics(runs)
