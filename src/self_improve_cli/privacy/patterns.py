@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 
 _REGEX_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
-    ("EMAIL", re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b")),
+    ("EMAIL", re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")),
     (
         "PHONE",
         # International format (+CC ...) or US-style 10 digits with separators.
@@ -66,10 +66,22 @@ PRESIDIO_ENTITY_MAP: dict[str, str] = {
 }
 
 
+# Unicode hyphen lookalikes — U+2010..U+2015 (hyphen, non-breaking hyphen,
+# figure/en/em dashes, horizontal bar) and U+2212 (minus sign) — appear in
+# real emails and numbers that evade ASCII-only patterns (e.g.
+# "signal‐spam@signal‐spam.fr" using U+2011). Normalize them to '-' before
+# scanning. The mapping is a 1:1 character swap, so match offsets still
+# point into the original text.
+_HYPHEN_TRANSLATION = str.maketrans({chr(cp): "-" for cp in (*range(0x2010, 0x2016), 0x2212)})
+
+
 def regex_scan(text: str) -> list[tuple[str, str, int, int]]:
     """Detect PII and secrets with regex patterns. Always available."""
     results: list[tuple[str, str, int, int]] = []
+    normalized = text.translate(_HYPHEN_TRANSLATION)
     for entity_type, pattern in _REGEX_PATTERNS:
-        for match in pattern.finditer(text):
-            results.append((entity_type, match.group(), match.start(), match.end()))
+        for match in pattern.finditer(normalized):
+            results.append(
+                (entity_type, text[match.start() : match.end()], match.start(), match.end())
+            )
     return results

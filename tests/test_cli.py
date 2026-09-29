@@ -1178,6 +1178,37 @@ def test_fetch_empty_trace_warns_on_stderr(tmp_path, capsys, monkeypatch):
     assert "list-projects" in err
 
 
+def test_fetch_empty_trace_warns_with_project_name(tmp_path, capsys, monkeypatch):
+    """`fetch` names the searched project in the warning and JSON output."""
+    import self_improve_cli.sources.langsmith as ls_module
+
+    class _EmptySource(_FakeSource):
+        def fetch_trace(self, trace_id: str, project_id: str | None = None) -> Trace:
+            self.fetch_calls.append({"trace_id": trace_id, "project_id": project_id})
+            return Trace(trace_id=trace_id, runs=[], sanitized=False, source="test")
+
+    monkeypatch.setattr(ls_module, "LangSmithSource", _EmptySource)
+
+    rc = main(
+        [
+            "fetch",
+            "trace-empty",
+            "--project",
+            "deepagent-preprod",
+            "--data-dir",
+            str(tmp_path),
+            "--format",
+            "json",
+        ]
+    )
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert "deepagent-preprod" in captured.err
+    data = json.loads(captured.out)
+    assert data["runs"] == 0
+    assert "deepagent-preprod" in data["warning"]
+
+
 def test_fetch_from_run_empty_trace_warns_with_project_id(tmp_path, capsys, monkeypatch):
     """`fetch --from-run` warns with project_id context when 0 runs are found."""
     import self_improve_cli.sources.langsmith as ls_module
