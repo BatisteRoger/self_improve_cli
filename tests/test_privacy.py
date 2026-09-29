@@ -79,6 +79,27 @@ def test_phone_regex_matches_us_format():
     assert report.entity_counts.get("PHONE", 0) >= 1
 
 
+def test_email_regex_matches_unicode_hyphens():
+    """Emails with Unicode hyphen lookalikes must be anonymized.
+
+    Regression: addresses like "signal‐spam@signal‐spam.fr" (U+2011
+    non-breaking hyphen in local part and domain) passed through verbatim
+    when only ASCII hyphens were recognized.
+    """
+    nbh = chr(0x2011)  # non-breaking hyphen
+    addr_local = f"signal{nbh}spam@signal{nbh}spam.fr"
+    addr_domain = f"phishing@phishing{nbh}initiative.org"
+    trace = _trace_with_text(f"From: {addr_local}; contact {addr_domain}")
+    anonymized, report = anonymize_trace(trace, backend="regex")
+    inputs = str(anonymized.runs[1].inputs)
+    message = anonymized.runs[1].input_messages[0].text
+    for out in (inputs, message):
+        assert addr_local not in out
+        assert addr_domain not in out
+        assert "<EMAIL_" in out
+    assert report.entity_counts.get("EMAIL", 0) >= 2
+
+
 @pytest.mark.parametrize("backend", _BACKENDS)
 def test_anonymize_replaces_iban(backend):
     _skip_if_presidio_unavailable(backend)
