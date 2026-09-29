@@ -214,9 +214,7 @@ def _prefix_invariance(sig: list[Run]) -> list[dict[str, Any]]:
         {"step_index": 0, "shared_prefix_chars": None, "shared_prefix_tokens": None, "share": None}
     ]
     for i in range(1, len(llm_runs)):
-        chars = max(
-            _common_prefix_chars(serialized[j], serialized[i]) for j in range(i)
-        )
+        chars = max(_common_prefix_chars(serialized[j], serialized[i]) for j in range(i))
         tokens = _estimate_tokens(serialized[i][:chars])
         prompt = _context_tokens(llm_runs[i])
         results.append(
