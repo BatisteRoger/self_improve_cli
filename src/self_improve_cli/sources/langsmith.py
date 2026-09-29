@@ -298,6 +298,11 @@ class LangSmithSource(TraceSource):
         self._client = client
         self._project_id_cache: str | None = None
 
+    @property
+    def project_name(self) -> str:
+        """The effective LangSmith project name (may be empty if unconfigured)."""
+        return self._project_name
+
     def _get_client(self) -> Any:
         if self._client is None:
             self._client = _get_client()

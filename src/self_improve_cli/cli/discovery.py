@@ -152,18 +152,22 @@ def _cmd_fetch(args: argparse.Namespace) -> int:
     trace = source.fetch_trace(trace_id, project_id=project_id)
 
     # Warn on empty traces — likely a project mismatch.
+    warning: str | None = None
     if not trace.runs:
-        hint = (
-            "No runs found. The trace may live in a different project than the "
-            "configured one. Try `self-improve list-projects` to discover project "
-            "names, then `self-improve fetch <trace_id> --project <name>`."
-        )
         if project_id:
-            hint = (
+            warning = (
                 f"No runs found for trace {trace_id} in project_id={project_id}. "
                 "The trace may be empty or access may be restricted."
             )
-        print(f"Warning: {hint}", file=sys.stderr)
+        else:
+            where = f" in project '{source.project_name}'" if source.project_name else ""
+            warning = (
+                f"No runs found for trace {trace_id}{where}. The trace may live "
+                "in a different project than the configured one. Try `self-improve "
+                "list-projects` to discover project names, then `self-improve "
+                "fetch <trace_id> --project <name>`."
+            )
+        print(f"Warning: {warning}", file=sys.stderr)
 
     # Save raw BEFORE anonymization (anonymize_trace mutates in place).
     store = _get_store(args)
@@ -189,6 +193,8 @@ def _cmd_fetch(args: argparse.Namespace) -> int:
         "raw_saved": args.keep_raw,
         "ter_stats": stats,
     }
+    if warning:
+        result["warning"] = warning
     if getattr(args, "from_run", False):
         result["resolved_from_run"] = args.trace_id
     _output(result, args)
