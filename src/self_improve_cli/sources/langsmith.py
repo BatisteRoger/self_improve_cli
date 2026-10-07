@@ -66,6 +66,8 @@ _FULL_SELECTS = [
     "ERROR",
     "INPUTS",
     "OUTPUTS",
+    "METADATA",
+    "TAGS",
 ]
 
 # traces.query defaults min_start_time to 24h ago, which would silently
