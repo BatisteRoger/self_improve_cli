@@ -1,5 +1,5 @@
 """Trace-view commands — skeleton, narrative, run-detail, context-at,
-target-timeline, error-neighborhood, tools.
+target-timeline, error-neighborhood, diff, tools.
 
 All views are offline: they load a locally stored sanitized trace and render
 a bounded representation. No network, no LLM calls.
@@ -22,6 +22,7 @@ from self_improve_cli.representations import (
     build_skeleton,
     build_tools_detail,
     build_tools_overview,
+    build_trace_diff,
     context_at,
     context_at_data,
     error_neighborhood,
@@ -32,6 +33,7 @@ from self_improve_cli.representations import (
     skeleton_data,
     target_timeline,
     target_timeline_data,
+    trace_diff_data,
 )
 
 
@@ -245,6 +247,17 @@ def _cmd_tools(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _cmd_diff(args: argparse.Namespace) -> int:
+    store = _get_store(args)
+    runs_a = store.load_trace(args.trace_a).runs
+    runs_b = store.load_trace(args.trace_b).runs
+    if args.format == "json":
+        _output(trace_diff_data(runs_a, runs_b, args.trace_a, args.trace_b), args)
+    else:
+        _output(build_trace_diff(runs_a, runs_b, args.trace_a, args.trace_b, full=args.full), args)
+    return EXIT_OK
+
+
 def register(sub: argparse._SubParsersAction) -> None:
     """Register trace-view commands on the given subparsers action."""
     # skeleton
@@ -401,6 +414,22 @@ def register(sub: argparse._SubParsersAction) -> None:
     )
     add_common_opts(p)
     p.set_defaults(func=_cmd_error_neighborhood)
+
+    # diff
+    p = sub.add_parser(
+        "diff",
+        help="Navigation: align two trajectories step by step and show where they diverge",
+    )
+    p.add_argument("trace_a")
+    p.add_argument("trace_b")
+    p.add_argument(
+        "--full",
+        action="store_true",
+        help="List every aligned pair and every divergent step (default: collapse "
+        "unchanged runs, cap divergence blocks).",
+    )
+    add_common_opts(p)
+    p.set_defaults(func=_cmd_diff)
 
     # tools
     p = sub.add_parser(

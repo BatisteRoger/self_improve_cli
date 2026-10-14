@@ -81,7 +81,7 @@ Dependency direction: `source -> canonical model -> privacy/storage -> determini
 - `sources/` — a `TraceSource` protocol plus the initial LangSmith adapter. SDK-specific objects stop at this boundary.
 - `privacy/` — anonymization policy, recognizers, placeholder mapping, and sanitization reports. Internally split into `patterns` (regex), `presidio_adapter` (NLP), `placeholders` (stable mapping), `report` (summary), and `redact` (recursive application + backend merge).
 - `storage/` — safe local artifact layout, atomic writes, metadata, and raw-retention controls. `base.py` (paths + serialization) plus per-area mixins: `traces`, `records`, `ter`, `prompts`, `ati`; `TraceStore` composes them.
-- `representations/` — deterministic L0/L1/L2/L3 TER builders over canonical sanitized data. One module per view (`skeleton`, `narrative`, `run_detail`, `context_at`, `navigation`, `tools`) over `common` helpers; `ter.py` writes all derived files. Public names re-exported from `__init__.py`.
+- `representations/` — deterministic L0/L1/L2/L3 TER builders over canonical sanitized data. One module per view (`skeleton`, `narrative`, `run_detail`, `context_at`, `navigation`, `trace_diff`, `tools`) over `common` helpers; `ter.py` writes all derived files. Public names re-exported from `__init__.py`.
 - `metrics/` — tool, context, and skill metrics, each labeled with its approximation and assumptions.
 - `cli/` — command parsing, stable exit codes, stdout/stderr rules, Markdown/JSON output, and agent-oriented help. `main.py` is a thin entry point; handlers and parser registration live per command family in `common` (shared plumbing), `discovery`, `views`, `metrics`, `records`, `prompts`, `ati`, `system`. Each module exposes `register(sub)`.
 
@@ -137,6 +137,7 @@ governs both.
 | `context-at` | ✓ step index | ✓ bounded preview, `--inputs-only/--outputs-only` (mutually exclusive), `--tool <id>`, `--full` | prev/next step, run-detail | ✓ inferred labels | ✓ lists valid steps, enforces `--from/--to` pairing | ✓ structured |
 | `target-timeline` | ✓ | ✓ truncation markers, `--compact` | run IDs per touch | ✓ | ✓ reports no matches | ✓ structured |
 | `error-neighborhood` | ✓ | ✓ window-bounded | run IDs, next step | ✓ excludes infra-cancelled | n/a | ✓ structured |
+| `diff` | ✓ narrative step numbers (`A#N = B#M`) | ✓ unchanged runs collapsed, divergence blocks capped at 10 steps per side with `narrative --from/--to` markers, `--full` | run IDs on both sides | ✓ alignment by `(run_type, name)` stated; no scoring | ✓ same ID, empty trace, unknown trace | ✓ structured |
 | `tool-metrics` | ✓ | ✓ friction section only when retries/oversized outputs exist; oscillations and pattern labels JSON-only | run IDs on retry/oversized signals | ✓ approximate + merged parallel latency; retries need same target within 5 calls | n/a | ✓ structured |
 | `context-metrics` | ✓ | ✓ lifecycle section only above re-paid threshold or with duplicates, top 3 non-system items + top 3 duplicates; churn JSON-only | step indices + `tool_call_id`s | ✓ approximate labels; drops/churn scoped to the same node (inferred) | n/a | ✓ structured |
 | `skill-metrics` | ✓ | ✓ | step indices | ✓ approximate labels | n/a | ✓ structured |

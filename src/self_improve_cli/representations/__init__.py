@@ -10,7 +10,8 @@ Granularity levels:
 
 One module per view — `common` (shared helpers + significant-run filter),
 `skeleton`, `narrative`, `run_detail`, `context_at`, `navigation`
-(target-timeline + error-neighborhood), `tools`, and `ter` (orchestration
+(target-timeline + error-neighborhood), `tools`, `trace_diff` (two-trace
+trajectory alignment), and `ter` (orchestration
 that writes all derived files at fetch time). All public names are
 re-exported here; `from self_improve_cli.representations import X` keeps
 working regardless of which module defines X.
@@ -34,10 +35,12 @@ from self_improve_cli.representations.tools import (
     build_tools_detail,
     build_tools_overview,
 )
+from self_improve_cli.representations.trace_diff import build_trace_diff, trace_diff_data
 
 __all__ = [
     "build_narrative",
     "build_skeleton",
+    "build_trace_diff",
     "build_tools_detail",
     "build_tools_overview",
     "context_at",
@@ -51,5 +54,6 @@ __all__ = [
     "skeleton_data",
     "target_timeline",
     "target_timeline_data",
+    "trace_diff_data",
     "write_ter",
 ]
