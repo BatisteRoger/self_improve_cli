@@ -132,13 +132,13 @@ governs both.
 | Command | Predictable | Bounded | Connected | Honest | Recoverable | Composable (JSON) |
 |---------|:-:|:-:|:-:|:-:|:-:|:-:|
 | `skeleton` | ✓ | ✓ `--errors-only` | run IDs | ✓ | ✓ | ✓ structured |
-| `narrative` | ✓ | ✓ truncation, `--from/--to/--around-step`, `--budget` | run IDs per step + omitted markers | ✓ | ✓ validates `--budget > 0` | ✓ structured |
+| `narrative` | ✓ | ✓ truncation, `--from/--to/--around-step`, `--budget` (header and omission markers counted; Markdown and JSON keep the same steps) | run IDs per step + omitted markers | ✓ | ✓ validates `--budget > 0` | ✓ structured |
 | `run-detail` | ✓ | ✓ `--tool-calls-only`, `--inputs-only/--outputs-only` (mutually exclusive) | parent/child refs | ✓ | ✓ suggests skeleton | ✓ structured |
 | `context-at` | ✓ step index | ✓ bounded preview, `--inputs-only/--outputs-only` (mutually exclusive), `--tool <id>`, `--full` | prev/next step, run-detail | ✓ inferred labels | ✓ lists valid steps, enforces `--from/--to` pairing | ✓ structured |
 | `target-timeline` | ✓ | ✓ truncation markers, `--compact` | run IDs per touch | ✓ | ✓ reports no matches | ✓ structured |
 | `error-neighborhood` | ✓ | ✓ window-bounded | run IDs, next step | ✓ excludes infra-cancelled | n/a | ✓ structured |
-| `tool-metrics` | ✓ | ✓ | run IDs on friction/retry/oscillation/oversized signals | ✓ approximate + merged parallel latency | n/a | ✓ structured |
-| `context-metrics` | ✓ | ✓ top-N lifecycle items | step indices + `tool_call_id`s | ✓ approximate labels | n/a | ✓ structured |
+| `tool-metrics` | ✓ | ✓ friction section only when retries/oversized outputs exist; oscillations and pattern labels JSON-only | run IDs on retry/oversized signals | ✓ approximate + merged parallel latency; retries need same target within 5 calls | n/a | ✓ structured |
+| `context-metrics` | ✓ | ✓ lifecycle section only above re-paid threshold or with duplicates, top 3 non-system items + top 3 duplicates; churn JSON-only | step indices + `tool_call_id`s | ✓ approximate labels; drops/churn scoped to the same node (inferred) | n/a | ✓ structured |
 | `skill-metrics` | ✓ | ✓ | step indices | ✓ approximate labels | n/a | ✓ structured |
 | `tools` | ✓ | ✓ `--detail` | tool names | ✓ | n/a | markdown-wrapped (tabular) |
 | `compare` | ✓ | ✓ | trace IDs | ✓ | n/a | ✓ structured |

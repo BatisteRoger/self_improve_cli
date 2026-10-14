@@ -32,12 +32,12 @@ a template.
 | "Why did this tool call fail?" | `run-detail` on the tool run | `context-at` for the next model input |
 | "Did the model receive that tool result/error?" | `context-at` for the step | `run-detail --inputs-only` on the next LLM run |
 | "Why did it read this file 4 times?" | `tool-metrics` (check repeated calls & process/friction signals) | `target-timeline <trace_id> <file> --compact` (overview), then `run-detail` on each touch |
-| "Did compaction drop the user's constraint?" | `context-metrics` (look for a drop and token-cost lifecycle churn/drops) | `run-detail` on the LLM steps before/after the drop |
+| "Did compaction drop the user's constraint?" | `context-metrics` (look for a drop; `--format json` for lifecycle drops and churn within the same node) | `run-detail` on the LLM steps before/after the drop |
 | "What supports the final claim?" | `narrative` (find the claim) | `run-detail --outputs-only` on the last LLM run |
 | "Where did this become expensive?" | `context-metrics` (growth curve + token-cost lifecycle for retained/duplicated payloads) | `tool-metrics` for attribution & oversized outputs, then `run-detail` on the largest contributor |
 | "Where was wall-clock latency spent (LLM vs tools vs retries)?" | `tool-metrics` (latency decomposition section) | `skeleton` or `run-detail` on the slowest tool/LLM run |
-| "Did the agent oscillate (A->B->A) or retry a failed tool blindly?" | `tool-metrics` (process & friction signals section) | `run-detail` on the cited `failed_run_id` / `retry_run_id` |
-| "How much context is re-paid per step?" | `context-metrics` (static context + token-cost lifecycle sections) | `run-detail --inputs-only` on a high-share step or `context-at --tool <id>` for a retained tool payload |
+| "Did the agent oscillate (A->B->A->B) or retry a failed tool blindly?" | `tool-metrics` (failed retries in the friction section; oscillations in `--format json`) | `run-detail` on the cited `failed_run_id` / `retry_run_id` |
+| "How much context is re-paid per step?" | `context-metrics` (static context; lifecycle section shows only when re-paid tokens are significant, full list in `--format json`) | `run-detail --inputs-only` on a high-share step or `context-at --tool <id>` for a retained tool payload |
 | "Could this work have been mechanical?" | `context-at` for the step (was the answer already knowable?) | `run-detail` on the tool run (constraint in the error vs in the schema); `target-timeline` (did the target change?) |
 | "Is this trace clean?" | `skeleton --errors-only` (quick triage) | `tool-metrics` and `context-metrics` for redundancy/anomalies, `error-neighborhood` for error recovery |
 | "Did the agent recover from that error?" | `error-neighborhood` | `run-detail` on the error and the next step |
