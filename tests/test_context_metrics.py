@@ -8,6 +8,7 @@ from self_improve_cli.metrics.context_metrics import (
     prefix_invariance,
     stale_tool_result_ratio,
     token_decomposition,
+    token_lifecycle,
 )
 from self_improve_cli.representations import significant_runs
 from tests.helpers import make_llm, make_msg, make_nested_llm, make_root, make_tool
@@ -257,3 +258,105 @@ def test_context_metrics_data_has_prefix_invariance():
     assert "prefix_invariance" in data
     assert len(data["prefix_invariance"]["steps"]) == 2
     assert "## Static context" in build_context_metrics(runs)
+
+
+def test_token_lifecycle_empty_trace():
+    assert token_lifecycle([]) == {
+        "items": [],
+        "duplicate_tool_outputs": [],
+        "churn_events": [],
+    }
+
+
+def test_token_lifecycle_tracks_repeated_exposure_and_drop():
+    big_tool_text = "x" * 1600  # 400 tokens (chars/4)
+    sys_msg = make_msg("system", "s" * 1200)  # 300 tokens
+    tc_msg = Message(
+        role="ai",
+        text="",
+        tool_calls=[ToolCall(name="read_file", args={"path": "a.py"}, id="call-1")],
+    )
+    tool_msg = Message(role="tool", text=big_tool_text, tool_call_id="call-1")
+
+    runs = [
+        make_root(),
+        make_llm("1", prompt_tokens=300, input_messages=[sys_msg]),
+        make_llm("2", prompt_tokens=700, input_messages=[sys_msg, tc_msg, tool_msg]),
+        make_llm("3", prompt_tokens=800, input_messages=[sys_msg, tc_msg, tool_msg]),
+        # Step 3 (0-based): compaction drops tool_msg
+        make_llm("4", prompt_tokens=350, input_messages=[sys_msg]),
+    ]
+    lc = token_lifecycle(runs, min_tokens=250)
+    by_source = {item["source"]: item for item in lc["items"]}
+
+    read_item = by_source["tool:read_file"]
+    assert read_item["tool_call_id"] == "call-1"
+    assert read_item["introduced_step"] == 1
+    assert read_item["last_step"] == 2
+    assert read_item["steps_present"] == 2
+    assert read_item["dropped_at_step"] == 3
+    assert read_item["tokens"] == 400
+    assert read_item["cumulative_tokens"] == 800
+    assert read_item["repaid_tokens"] == 400
+
+    sys_item = by_source["system"]
+    assert sys_item["introduced_step"] == 0
+    assert sys_item["last_step"] == 3
+    assert sys_item["steps_present"] == 4
+    assert sys_item["dropped_at_step"] is None
+    assert sys_item["repaid_tokens"] == 900
+
+    md = build_context_metrics(runs)
+    assert "## Token-cost lifecycle (approximate)" in md
+    assert "tool:read_file (call-1)" in md
+    assert "[dropped at step 3]" in md
+
+
+def test_token_lifecycle_detects_duplicate_tool_outputs_and_churn():
+    payload = "content-" * 40  # 320 chars -> 80 tokens (>= _LIFECYCLE_DUP_MIN_TOKENS)
+    tc1 = Message(
+        role="ai",
+        text="",
+        tool_calls=[
+            ToolCall(name="read_file", args={"path": "a.py"}, id="call-1"),
+            ToolCall(name="read_file", args={"path": "a.py"}, id="call-2"),
+        ],
+    )
+    t1 = Message(role="tool", text=payload, tool_call_id="call-1")
+    t2 = Message(role="tool", text=payload, tool_call_id="call-2")
+    tc3 = Message(
+        role="ai",
+        text="",
+        tool_calls=[ToolCall(name="read_file", args={"path": "a.py"}, id="call-3")],
+    )
+    t3 = Message(role="tool", text=payload, tool_call_id="call-3")
+
+    runs = [
+        make_root(),
+        # Step 0: two identical tool outputs in the same context
+        make_llm("1", prompt_tokens=500, input_messages=[tc1, t1, t2]),
+        # Step 1: compacted away
+        make_llm("2", prompt_tokens=200, input_messages=[make_msg("system", "summary")]),
+        # Step 2: re-fetched the exact same payload
+        make_llm("3", prompt_tokens=400, input_messages=[tc3, t3]),
+    ]
+    lc = token_lifecycle(runs)
+    assert len(lc["duplicate_tool_outputs"]) == 1
+    dup = lc["duplicate_tool_outputs"][0]
+    assert dup["tool"] == "read_file"
+    assert dup["first_step"] == 0
+    assert dup["copies"] == 2
+    assert dup["duplicate_tokens"] == 80
+    assert dup["tool_call_ids"] == ["call-1", "call-2"]
+
+    assert len(lc["churn_events"]) == 1
+    churn = lc["churn_events"][0]
+    assert churn["source"] == "tool:read_file"
+    assert churn["dropped_at_step"] == 1
+    assert churn["reintroduced_at_step"] == 2
+
+    data = context_metrics_data(runs)
+    assert "token_lifecycle" in data
+    md = build_context_metrics(runs)
+    assert "Duplicate tool output at step 0: read_file x2" in md
+    assert "Context churn: tool:read_file" in md

@@ -3,10 +3,13 @@
 from self_improve_cli.metrics.tool_metrics import (
     build_tool_metrics,
     extract_target_key,
+    latency_decomposition,
     modify_granularity,
+    process_and_friction_signals,
     repeated_same_target,
     token_cost_attribution,
     tool_call_counts,
+    tool_metrics_data,
 )
 from tests.helpers import make_llm, make_root, make_tool
 
@@ -113,3 +116,93 @@ def test_token_cost_attribution_ignores_negative_deltas():
 
 def test_build_tool_metrics_empty_trace():
     assert "(empty trace)" in build_tool_metrics([])
+
+
+def test_latency_decomposition_merges_parallel_tool_intervals():
+    root = make_root()
+    root.start_time = "2026-10-14T10:00:00Z"
+    root.end_time = "2026-10-14T10:00:10Z"
+
+    llm1 = make_llm("1", prompt_tokens=100)
+    llm1.start_time = "2026-10-14T10:00:00Z"
+    llm1.end_time = "2026-10-14T10:00:02Z"  # 2.0s
+
+    # Two parallel tool calls running from t=2s to t=6s (4s wall-clock each, overlapped)
+    t1 = make_tool("2", "web_search", {"query": "a"})
+    t1.start_time = "2026-10-14T10:00:02Z"
+    t1.end_time = "2026-10-14T10:00:06Z"
+
+    t2 = make_tool("3", "web_search", {"query": "b"})
+    t2.start_time = "2026-10-14T10:00:03Z"
+    t2.end_time = "2026-10-14T10:00:07Z"
+    t2.error = "HTTP 500"
+    t2.status = "error"
+
+    llm2 = make_llm("4", prompt_tokens=200)
+    llm2.start_time = "2026-10-14T10:00:08Z"
+    llm2.end_time = "2026-10-14T10:00:10Z"  # 2.0s (1s gap between t=7s and t=8s)
+
+    lat = latency_decomposition([root, llm1, t1, t2, llm2])
+    assert lat["available"] is True
+    assert lat["total_s"] == 10.0
+    assert lat["llm_time_s"] == 4.0
+    # Merged tool window is [2s, 7s] = 5.0s, NOT 4s + 4s = 8s
+    assert lat["tool_time_s"] == 5.0
+    assert lat["failed_tool_time_s"] == 4.0
+    assert lat["unexplained_gap_s"] == 1.0
+    assert lat["per_tool"]["web_search"]["calls"] == 2
+    assert lat["per_tool"]["web_search"]["total_s"] == 8.0
+
+
+def test_process_and_friction_signals_retries_oscillation_and_oversized():
+    # 1. Identical failed retry on edit_file
+    t1 = make_tool("1", "edit_file", {"path": "a.py", "old_string": "x"})
+    t1.error = "old_string not found"
+    t1.status = "error"
+    t2 = make_tool("2", "edit_file", {"path": "a.py", "old_string": "x"})
+    t2.error = "old_string not found"
+    t2.status = "error"
+    # 2. Adapted retry after error that succeeds
+    t3 = make_tool("3", "edit_file", {"path": "a.py", "old_string": "y"})
+
+    # 3. Oscillation A -> B -> A -> B on read_file
+    o1 = make_tool("4", "read_file", {"path": "foo.py"})
+    o2 = make_tool("5", "read_file", {"path": "bar.py"})
+    o3 = make_tool("6", "read_file", {"path": "foo.py"})
+    o4 = make_tool("7", "read_file", {"path": "bar.py"})
+    o4.outputs = {"output": "z" * 10000}  # 2500 estimated tokens -> oversized
+
+    runs = [make_root(), t1, t2, t3, o1, o2, o3, o4]
+    sig = process_and_friction_signals(runs, oversized_tokens=2000)
+
+    assert len(sig["failed_retries"]) == 2
+    assert sig["failed_retries"][0]["mode"] == "identical_args"
+    assert sig["failed_retries"][0]["failed_run_id"] == "run-1"
+    assert sig["failed_retries"][0]["retry_run_id"] == "run-2"
+    assert sig["failed_retries"][0]["suggested_pattern"] == "recovery.failed_recovery"
+
+    assert sig["failed_retries"][1]["mode"] == "adapted_after_error"
+    assert sig["failed_retries"][1]["failed_run_id"] == "run-2"
+    assert sig["failed_retries"][1]["retry_run_id"] == "run-3"
+    assert sig["failed_retries"][1]["suggested_pattern"] == "tool.probabilistic_discovery"
+
+    assert len(sig["oscillations"]) == 1
+    osc = sig["oscillations"][0]
+    assert osc["length"] == 4
+    assert osc["run_ids"] == ["run-4", "run-5", "run-6", "run-7"]
+    assert osc["suggested_pattern"] == "control.nonprogress_loop"
+
+    assert len(sig["oversized_outputs"]) == 1
+    ov = sig["oversized_outputs"][0]
+    assert ov["run_id"] == "run-7"
+    assert ov["estimated_tokens"] >= 2500
+    assert ov["suggested_candidate"] == "harness.observation_pack"
+
+    md = build_tool_metrics(runs)
+    assert "## Process & friction signals" in md
+    assert "Failed retry [identical_args]" in md
+    assert "Oscillation (4 calls)" in md
+    assert "Oversized tool output: read_file (bar.py) id=run-7" in md
+
+    data = tool_metrics_data(runs)
+    assert "process_and_friction_signals" in data
