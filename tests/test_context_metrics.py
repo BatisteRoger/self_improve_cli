@@ -269,7 +269,7 @@ def test_token_lifecycle_empty_trace():
 
 
 def test_token_lifecycle_tracks_repeated_exposure_and_drop():
-    big_tool_text = "x" * 1600  # 400 tokens (chars/4)
+    big_tool_text = "x" * 4400  # 1100 tokens (chars/4), re-paid once >= md threshold
     sys_msg = make_msg("system", "s" * 1200)  # 300 tokens
     tc_msg = Message(
         role="ai",
@@ -295,9 +295,9 @@ def test_token_lifecycle_tracks_repeated_exposure_and_drop():
     assert read_item["last_step"] == 2
     assert read_item["steps_present"] == 2
     assert read_item["dropped_at_step"] == 3
-    assert read_item["tokens"] == 400
-    assert read_item["cumulative_tokens"] == 800
-    assert read_item["repaid_tokens"] == 400
+    assert read_item["tokens"] == 1100
+    assert read_item["cumulative_tokens"] == 2200
+    assert read_item["repaid_tokens"] == 1100
 
     sys_item = by_source["system"]
     assert sys_item["introduced_step"] == 0
@@ -310,6 +310,49 @@ def test_token_lifecycle_tracks_repeated_exposure_and_drop():
     assert "## Token-cost lifecycle (approximate)" in md
     assert "tool:read_file (call-1)" in md
     assert "[dropped at step 3]" in md
+    # System prompts are re-paid by design: JSON only, not listed in markdown.
+    assert "| system |" not in md
+
+
+def test_token_lifecycle_markdown_hidden_below_repaid_threshold():
+    """Small re-paid items stay JSON-only; the markdown section is omitted."""
+    sys_msg = make_msg("system", "s" * 8000)  # large, but system is excluded
+    tc_msg = Message(
+        role="ai",
+        text="",
+        tool_calls=[ToolCall(name="read_file", args={"path": "a.py"}, id="call-1")],
+    )
+    tool_msg = Message(role="tool", text="x" * 1600, tool_call_id="call-1")  # 400 re-paid
+    runs = [
+        make_root(),
+        make_llm("1", prompt_tokens=2100, input_messages=[sys_msg, tc_msg, tool_msg]),
+        make_llm("2", prompt_tokens=2200, input_messages=[sys_msg, tc_msg, tool_msg]),
+    ]
+    assert token_lifecycle(runs)["items"]
+    assert "Token-cost lifecycle" not in build_context_metrics(runs)
+
+
+def test_token_lifecycle_churn_ignores_interleaved_other_node():
+    """A step from another graph node (different first message) between two
+    steps of the same node is not a drop: no churn, no dropped_at_step."""
+    main_sys = make_msg("system", "main agent " * 20)
+    other_sys = make_msg("system", "guardrail evaluator " * 20)
+    tc = Message(
+        role="ai",
+        text="",
+        tool_calls=[ToolCall(name="read_file", args={"path": "a.py"}, id="call-1")],
+    )
+    tool_msg = Message(role="tool", text="y" * 1200, tool_call_id="call-1")
+    runs = [
+        make_root(),
+        make_llm("1", prompt_tokens=500, input_messages=[main_sys, tc, tool_msg]),
+        make_llm("2", prompt_tokens=100, input_messages=[other_sys]),
+        make_llm("3", prompt_tokens=600, input_messages=[main_sys, tc, tool_msg]),
+    ]
+    lc = token_lifecycle(runs)
+    assert lc["churn_events"] == []
+    tool_item = next(i for i in lc["items"] if i["source"] == "tool:read_file")
+    assert tool_item["dropped_at_step"] is None
 
 
 def test_token_lifecycle_detects_duplicate_tool_outputs_and_churn():
@@ -331,14 +374,15 @@ def test_token_lifecycle_detects_duplicate_tool_outputs_and_churn():
     )
     t3 = Message(role="tool", text=payload, tool_call_id="call-3")
 
+    sys_msg = make_msg("system", "agent")  # same first message = same logical node
     runs = [
         make_root(),
         # Step 0: two identical tool outputs in the same context
-        make_llm("1", prompt_tokens=500, input_messages=[tc1, t1, t2]),
+        make_llm("1", prompt_tokens=500, input_messages=[sys_msg, tc1, t1, t2]),
         # Step 1: compacted away
-        make_llm("2", prompt_tokens=200, input_messages=[make_msg("system", "summary")]),
+        make_llm("2", prompt_tokens=200, input_messages=[sys_msg, make_msg("human", "summary")]),
         # Step 2: re-fetched the exact same payload
-        make_llm("3", prompt_tokens=400, input_messages=[tc3, t3]),
+        make_llm("3", prompt_tokens=400, input_messages=[sys_msg, tc3, t3]),
     ]
     lc = token_lifecycle(runs)
     assert len(lc["duplicate_tool_outputs"]) == 1
@@ -359,4 +403,6 @@ def test_token_lifecycle_detects_duplicate_tool_outputs_and_churn():
     assert "token_lifecycle" in data
     md = build_context_metrics(runs)
     assert "Duplicate tool output at step 0: read_file x2" in md
-    assert "Context churn: tool:read_file" in md
+    # Churn is JSON-only.
+    assert "churn" not in md.lower()
+    assert len(data["token_lifecycle"]["churn_events"]) == 1

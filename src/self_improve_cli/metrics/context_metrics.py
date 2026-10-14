@@ -30,7 +30,10 @@ _STALE_TOOL_RESULT_K = 5
 _CHARS_PER_TOKEN = 4
 _LIFECYCLE_MIN_TOKENS = 250
 _LIFECYCLE_DUP_MIN_TOKENS = 50
-_LIFECYCLE_TOP_N = 5
+_LIFECYCLE_TOP_N = 3
+# Markdown shows the lifecycle section only when a non-system item re-pays at
+# least this many tokens (or duplicate tool outputs exist). JSON is unconditional.
+_LIFECYCLE_MD_MIN_REPAID = 1000
 
 
 # --- Helpers ----------------------------------------------------------------
@@ -313,6 +316,10 @@ def _token_lifecycle(
       occupying the same step's context under multiple tool calls.
     - `churn_events`: content (>= _LIFECYCLE_DUP_MIN_TOKENS) present at an early step,
       dropped at an intermediate step (e.g. compaction), and re-introduced later.
+
+    Drops (items' `dropped_at_step` and churn) only compare steps of the same
+    logical node, identified by the first input message (inferred). A step from
+    another graph node interleaved between two steps is not a drop.
     """
     llm_runs = _main_loop_llm_runs(sig)
     if not llm_runs:
@@ -325,6 +332,15 @@ def _token_lifecycle(
     name_by_id: dict[str, str] = {}
     for r in llm_runs:
         name_by_id.update(_tool_name_by_call_id(r))
+
+    # Logical node per step: same first input message = same graph node (inferred).
+    node_steps: dict[tuple[str, str], list[int]] = {}
+    node_of_step: list[tuple[str, str]] = []
+    for step_idx, r in enumerate(llm_runs):
+        first = r.input_messages[0] if r.input_messages else None
+        node = (first.role, first.text) if first else ("", "")
+        node_of_step.append(node)
+        node_steps.setdefault(node, []).append(step_idx)
 
     # Track unique message instances: key = (role, tool_call_id_or_idx, text)
     item_meta: dict[tuple[str, str, str], dict[str, Any]] = {}
@@ -389,7 +405,6 @@ def _token_lifecycle(
                     existing["duplicate_tokens"] = est * (len(call_ids) - 1)
                     existing["tool_call_ids"] = [cid for cid in call_ids if cid]
 
-    total_steps = len(llm_runs)
     items: list[dict[str, Any]] = []
     for entry in item_meta.values():
         est = entry["tokens"]
@@ -401,7 +416,7 @@ def _token_lifecycle(
         count = len(steps_sorted)
         steps_set = entry["steps"]
         dropped_at = next(
-            (s for s in range(intro + 1, total_steps) if s not in steps_set),
+            (s for s in node_steps[node_of_step[intro]] if s > intro and s not in steps_set),
             None,
         )
         items.append(
@@ -423,21 +438,24 @@ def _token_lifecycle(
 
     churn_events: list[dict[str, Any]] = []
     for (source, text), steps_set in content_steps.items():
-        steps_sorted = sorted(steps_set)
-        for idx in range(len(steps_sorted) - 1):
-            s_prev = steps_sorted[idx]
-            s_next = steps_sorted[idx + 1]
-            if s_next > s_prev + 1:
-                churn_events.append(
-                    {
-                        "source": source,
-                        "tokens": _estimate_tokens(text),
-                        "introduced_step": steps_sorted[0],
-                        "dropped_at_step": s_prev + 1,
-                        "reintroduced_at_step": s_next,
-                    }
-                )
-                break
+        for positions in node_steps.values():
+            present = [i for i, s in enumerate(positions) if s in steps_set]
+            gap = next(
+                ((a, b) for a, b in zip(present, present[1:], strict=False) if b > a + 1),
+                None,
+            )
+            if gap is None:
+                continue
+            churn_events.append(
+                {
+                    "source": source,
+                    "tokens": _estimate_tokens(text),
+                    "introduced_step": positions[present[0]],
+                    "dropped_at_step": positions[gap[0] + 1],
+                    "reintroduced_at_step": positions[gap[1]],
+                }
+            )
+            break
 
     churn_events.sort(key=lambda x: (-x["tokens"], x["dropped_at_step"]))
     duplicates = sorted(dup_tracker.values(), key=lambda x: -x["duplicate_tokens"])
@@ -572,10 +590,14 @@ def build_context_metrics(runs: list[Run]) -> str:
         sections.append("")
 
     # 3. Token-cost lifecycle
+    # Bounded: shown only above a re-paid threshold; churn and the full lists
+    # stay in --format json.
     lifecycle = _token_lifecycle(sig)
-    if lifecycle["items"] or lifecycle["duplicate_tool_outputs"] or lifecycle["churn_events"]:
+    md_items = [i for i in lifecycle["items"] if i["role"] != "system" and i["repaid_tokens"] > 0]
+    dups = lifecycle["duplicate_tool_outputs"]
+    if dups or any(i["repaid_tokens"] >= _LIFECYCLE_MD_MIN_REPAID for i in md_items):
         sections += ["## Token-cost lifecycle (approximate)", ""]
-        for item in lifecycle["items"][:_LIFECYCLE_TOP_N]:
+        for item in md_items[:_LIFECYCLE_TOP_N]:
             call_ref = f" ({item['tool_call_id']})" if item["tool_call_id"] else ""
             drop_ref = (
                 f" [dropped at step {item['dropped_at_step']}]"
@@ -583,37 +605,30 @@ def build_context_metrics(runs: list[Run]) -> str:
                 else ""
             )
             sections.append(
-                f"Step {item['introduced_step']:3d}->{item['last_step']:<3d} "
-                f"({item['steps_present']} steps) | {item['source']}{call_ref} | "
-                f"~{_fmt_k(item['tokens'])} x {item['steps_present']} = "
-                f"~{_fmt_k(item['cumulative_tokens'])} cumulative "
-                f"(~{_fmt_k(item['repaid_tokens'])} re-paid){drop_ref}"
+                f"Steps {item['introduced_step']}-{item['last_step']} | "
+                f"{item['source']}{call_ref} | ~{_fmt_k(item['tokens'])} x "
+                f"{item['steps_present']} steps, ~{_fmt_k(item['repaid_tokens'])} re-paid"
+                f"{drop_ref}"
             )
-        extra_items = len(lifecycle["items"]) - _LIFECYCLE_TOP_N
+        extra_items = len(md_items) - _LIFECYCLE_TOP_N
         if extra_items > 0:
-            sections.append(f"... ({extra_items} more items >= {_LIFECYCLE_MIN_TOKENS} tokens)")
+            sections.append(f"... ({extra_items} more items, see --format json)")
 
-        for dup in lifecycle["duplicate_tool_outputs"]:
+        for dup in dups[:_LIFECYCLE_TOP_N]:
             cids = f" ({', '.join(dup['tool_call_ids'])})" if dup["tool_call_ids"] else ""
             sections.append(
                 f"Duplicate tool output at step {dup['first_step']}: "
                 f"{dup['tool']} x{dup['copies']}{cids} "
                 f"(~{_fmt_k(dup['duplicate_tokens'])} redundant tokens)"
             )
-
-        for churn in lifecycle["churn_events"]:
+        if len(dups) > _LIFECYCLE_TOP_N:
             sections.append(
-                f"Context churn: {churn['source']} (~{_fmt_k(churn['tokens'])}) "
-                f"dropped at step {churn['dropped_at_step']}, "
-                f"re-introduced at step {churn['reintroduced_at_step']}"
+                f"... ({len(dups) - _LIFECYCLE_TOP_N} more duplicates, see --format json)"
             )
 
         sections += [
             "",
-            "Note: APPROXIMATE (chars/4). Cumulative tokens = estimated payload size x "
-            "main-loop steps present; provider prefix-caching may reduce billed cost. "
-            "Long retention signals potentially avoidable context, not proof the content "
-            "was unused.",
+            "Note: APPROXIMATE (chars/4), ignores prefix-caching; not proof of unused content.",
             "",
         ]
 
@@ -670,7 +685,9 @@ def context_metrics_data(runs: list[Run]) -> dict[str, Any]:
             "token_lifecycle": (
                 "Payload retention across main-loop steps, chars/4 (APPROXIMATE). "
                 "Cumulative tokens do not account for provider prefix-caching; long "
-                "retention signals potentially avoidable context, not unused content."
+                "retention signals potentially avoidable context, not unused content. "
+                "Drops and churn compare only steps of the same logical node (same "
+                "first input message, inferred)."
             ),
         },
     }
