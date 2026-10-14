@@ -94,6 +94,10 @@ requirement — skip levels when you already know where to look.
 `compare <trace_a> <trace_b>` sits beside the ladder for A/B testing two
 traces (tokens, latency, tool calls, skills). `diff <trace_a> <trace_b>`
 is its step-level counterpart: where the two trajectories diverged.
+`gate <trace_before> <trace_after>` turns the pair into a verdict
+(pass / fail / inconclusive, exit 0/1/2) from both `assess` outcomes and
+the `compare` totals — record an outcome on both traces first, or the
+verdict is inconclusive.
 
 ## Principles
 

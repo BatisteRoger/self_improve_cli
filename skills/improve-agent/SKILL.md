@@ -74,8 +74,8 @@ and assess it the same way.
 ### 7. Compare and receipt
 
 ```bash
-self-improve compare <trace_a> <trace_b>
 self-improve assess <trace_b>
+self-improve gate <trace_a> <trace_b>
 self-improve skeleton <trace_b> --errors-only
 ```
 
@@ -84,7 +84,10 @@ The receipt answers two questions:
 - **Capability held?** Outcome not regressed, no new errors.
 - **Efficiency gained?** Tokens, latency, or call count reduced.
 
-Both yes -> the candidate is worth keeping; say so to the reviewer with the
+`gate` answers both from the assessments and the `compare` totals: exit 0
+pass, 1 fail, 2 inconclusive (missing outcome, or stable quality at a
+higher cost). It does not check for new errors — the skeleton does.
+Pass -> the candidate is worth keeping; say so to the reviewer with the
 receipt attached. Capability regressed -> revert or iterate. Either way the
 receipts stay on disk for the next iteration.
 

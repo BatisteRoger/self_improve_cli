@@ -143,6 +143,7 @@ governs both.
 | `skill-metrics` | ✓ | ✓ | step indices | ✓ approximate labels | n/a | ✓ structured |
 | `tools` | ✓ | ✓ `--detail` | tool names | ✓ | n/a | markdown-wrapped (tabular) |
 | `compare` | ✓ | ✓ | trace IDs | ✓ | n/a | ✓ structured |
+| `gate` | ✓ before/after order | ✓ verdict + per-axis reasons | `diff`/`compare`/`assess` next commands | ✓ missing/unknown outcome = inconclusive; efficiency labeled approximate | ✓ same ID, unknown trace | ✓ structured; exit 0/1/2 mirrors verdict |
 | `skill-check` | ✓ | ✓ | n/a | ✓ | ✓ suggests skill-metrics | ✓ structured |
 | `assess` | ✓ | ✓ | n/a | ✓ | ✓ suggests `--task` | JSON in both formats |
 | `finding` | ✓ subcommands like `ati`/`prompt` | ✓ compact list, JSON for full | finding IDs, run IDs in evidence | ✓ free-string pattern/locus documented | ✓ suggests `finding list` | ✓ structured |
@@ -281,6 +282,17 @@ self-improve finding clear <trace_id>
 
 Finding IDs are sequential (`f1`, `f2`, ...) so reports and later commands
 can cite them stably. `info` reports the findings count and IDs.
+
+### Before/after gate
+
+`gate <trace_before> <trace_after>` is the receipt of one improvement-loop iteration: a verdict for a human gate, not a decision.
+
+- **Quality**: the `assess` outcome on each side, ranked success > partial > fail. A missing assessment or an `unknown` outcome on either side makes quality unknown — never guessed.
+- **Efficiency** (approximate, single traces): tokens, latency, tool-call count from the `compare` totals (`metrics/efficiency.py`). Any increase counts as degraded; no noise tolerance.
+- **Verdict rule** (`metrics/gate.py::decide_verdict`): quality regressed -> `fail`; quality unknown -> `inconclusive`; quality improved -> `pass`; quality stable + efficiency improved/equal -> `pass`; quality stable + efficiency degraded -> `inconclusive` (a cost increase may be deliberate).
+- **Exit code mirrors the verdict**: 0 pass, 1 fail, 2 inconclusive. Errors (unknown trace, same ID twice) also exit 1, and argparse usage errors exit 2 — only 0 is unambiguous.
+
+`pass` means "no regression observed on this pair": a stable `fail -> fail` pair with lower cost passes.
 
 ### Anonymizer backend
 

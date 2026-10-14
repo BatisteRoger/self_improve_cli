@@ -156,6 +156,7 @@ self-improve run-detail <trace_id> <run_id>  # L3: full content of one run
 | L3 | `run-detail`, `context-at` | Full untruncated content of one run or one step |
 | Nav | `target-timeline`, `error-neighborhood` | Every touch on a target; steps around each error |
 | — | `compare` | Diff two traces (tokens, latency, skills) |
+| — | `gate` | Before/after verdict: pass / fail / inconclusive (exit 0/1/2) |
 | — | `skill-check` | Verify expected skill trigger (exit 0/1) |
 | — | `assess` | Attach task & outcome assessment to a trace |
 | — | `finding` | Persist analyst findings (add/list/remove/clear) |

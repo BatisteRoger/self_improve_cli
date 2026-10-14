@@ -1,5 +1,5 @@
 """Metrics and verification commands — tool-metrics, context-metrics,
-skill-metrics, compare, skill-check.
+skill-metrics, compare, gate, skill-check.
 """
 
 from __future__ import annotations
@@ -9,6 +9,9 @@ import json
 
 from self_improve_cli.cli.common import (
     EXIT_ERROR,
+    EXIT_GATE_FAIL,
+    EXIT_GATE_INCONCLUSIVE,
+    EXIT_GATE_PASS,
     EXIT_OK,
     _get_store,
     _output,
@@ -63,47 +66,19 @@ def _cmd_skill_metrics(args: argparse.Namespace) -> int:
 
 def _cmd_compare(args: argparse.Namespace) -> int:
     """Compare two traces: tokens, latency, tool calls, and skill invocations."""
+    from self_improve_cli.metrics.efficiency import efficiency_summary
     from self_improve_cli.metrics.skill_metrics import skill_invocations
-    from self_improve_cli.metrics.tool_metrics import tool_call_counts
 
     store = _get_store(args)
     trace_a = store.load_trace(args.trace_a)
     trace_b = store.load_trace(args.trace_b)
 
-    from self_improve_cli.representations import significant_runs
-
-    sig_a = significant_runs(trace_a.runs)
-    sig_b = significant_runs(trace_b.runs)
-
-    def _total_tokens(sig: list) -> int:
-        return sum(r.total_tokens or 0 for r in sig if r.run_type.value == "llm")
-
-    def _llm_count(sig: list) -> int:
-        return sum(1 for r in sig if r.run_type.value == "llm")
-
-    def _latency_ms(sig: list) -> int | None:
-        if not sig or not sig[0].start_time:
-            return None
-        from datetime import datetime
-
-        try:
-            start = datetime.fromisoformat(sig[0].start_time.replace("Z", "+00:00"))
-            end_run = max(sig, key=lambda r: r.end_time or r.start_time or "")
-            if not end_run.end_time:
-                return None
-            end = datetime.fromisoformat(end_run.end_time.replace("Z", "+00:00"))
-            return int((end - start).total_seconds() * 1000)
-        except (ValueError, TypeError):
-            return None
-
-    tokens_a = _total_tokens(sig_a)
-    tokens_b = _total_tokens(sig_b)
-    llm_a = _llm_count(sig_a)
-    llm_b = _llm_count(sig_b)
-    latency_a = _latency_ms(sig_a)
-    latency_b = _latency_ms(sig_b)
-    tools_a = tool_call_counts(trace_a.runs)
-    tools_b = tool_call_counts(trace_b.runs)
+    eff_a = efficiency_summary(trace_a.runs)
+    eff_b = efficiency_summary(trace_b.runs)
+    tokens_a, tokens_b = eff_a.tokens, eff_b.tokens
+    llm_a, llm_b = eff_a.llm_calls, eff_b.llm_calls
+    latency_a, latency_b = eff_a.latency_ms, eff_b.latency_ms
+    tools_a, tools_b = eff_a.tool_calls, eff_b.tool_calls
     skills_a = skill_invocations(trace_a.runs)
     skills_b = skill_invocations(trace_b.runs)
 
@@ -142,6 +117,35 @@ def _cmd_compare(args: argparse.Namespace) -> int:
         ]
         print("\n".join(lines))
     return EXIT_OK
+
+
+def _cmd_gate(args: argparse.Namespace) -> int:
+    """Before/after verdict receipt: pass / fail / inconclusive, exit 0 / 1 / 2."""
+    from self_improve_cli.metrics.efficiency import efficiency_summary
+    from self_improve_cli.metrics.gate import Verdict, build_gate, gate_data
+
+    if args.trace_before == args.trace_after:
+        raise ValueError(
+            f"trace_before and trace_after are the same ({args.trace_before}). "
+            "Pass the trace recorded before the change, then the one after."
+        )
+    store = _get_store(args)
+    before = store.load_trace(args.trace_before)
+    after = store.load_trace(args.trace_after)
+    data = gate_data(
+        args.trace_before,
+        args.trace_after,
+        store.load_assessment(args.trace_before),
+        store.load_assessment(args.trace_after),
+        efficiency_summary(before.runs),
+        efficiency_summary(after.runs),
+    )
+    _output(data if args.format == "json" else build_gate(data), args)
+    return {
+        Verdict.PASS: EXIT_GATE_PASS,
+        Verdict.FAIL: EXIT_GATE_FAIL,
+        Verdict.INCONCLUSIVE: EXIT_GATE_INCONCLUSIVE,
+    }[Verdict(data["verdict"])]
 
 
 def _cmd_skill_check(args: argparse.Namespace) -> int:
@@ -213,6 +217,16 @@ def register(sub: argparse._SubParsersAction) -> None:
     p.add_argument("trace_b")
     add_common_opts(p)
     p.set_defaults(func=_cmd_compare)
+
+    # gate
+    p = sub.add_parser(
+        "gate",
+        help="Verification: before/after verdict (exit 0=pass, 1=fail, 2=inconclusive)",
+    )
+    p.add_argument("trace_before")
+    p.add_argument("trace_after")
+    add_common_opts(p)
+    p.set_defaults(func=_cmd_gate)
 
     # skill-check
     p = sub.add_parser(
