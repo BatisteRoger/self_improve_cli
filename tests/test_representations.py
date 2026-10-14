@@ -791,3 +791,124 @@ def test_error_neighborhood_empty_trace():
     """error-neighborhood handles an empty trace gracefully."""
     out = error_neighborhood([])
     assert "empty trace" in out
+
+
+# ---------------------------------------------------------------------------
+# SLN-49: priority-budgeted trajectory view (narrative --budget)
+# ---------------------------------------------------------------------------
+
+
+def test_narrative_budget_prioritizes_anchors_and_errors_over_tool_bulk():
+    """Under a tight budget, anchors and errors survive while routine tools are omitted."""
+    root = make_root(trace_id="trace-budget")
+    root.input_messages = [make_msg("human", "Fix the bug in app.py")]
+
+    llm1 = make_run(
+        "10-llm1",
+        run_type=RunType.LLM,
+        name="ChatOpenAI",
+        parent="root",
+        trace_id="trace-budget",
+        prompt_tokens=200,
+    )
+    llm1.input_messages = [make_msg("human", "Fix the bug in app.py")]
+    llm1.output_message = Message(
+        role="ai",
+        text="I will inspect the file first.",
+        tool_calls=[ToolCall(name="read_file", args={"path": "app.py"}, id="c1")],
+    )
+
+    # Routine bulky tool step (Tier 3)
+    tool_bulky = make_run(
+        "20-tool-ok",
+        run_type=RunType.TOOL,
+        name="read_file",
+        parent="root",
+        trace_id="trace-budget",
+    )
+    tool_bulky.inputs = {"path": "app.py"}
+    tool_bulky.outputs = {"output": "x" * 2000}
+
+    # Errored tool step (Tier 1)
+    tool_err = make_run(
+        "30-tool-err",
+        run_type=RunType.TOOL,
+        name="edit_file",
+        parent="root",
+        trace_id="trace-budget",
+    )
+    tool_err.inputs = {"path": "app.py"}
+    tool_err.error = "ValueError: old_string not found"
+    tool_err.status = "error"
+
+    llm_final = make_run(
+        "40-llm2",
+        run_type=RunType.LLM,
+        name="ChatOpenAI",
+        parent="root",
+        trace_id="trace-budget",
+        prompt_tokens=300,
+    )
+    llm_final.input_messages = [make_msg("human", "Fix the bug in app.py")]
+    llm_final.output_message = Message(role="ai", text="Fixed the issue in app.py.")
+
+    runs = [root, llm1, tool_bulky, tool_err, llm_final]
+    md = build_narrative(runs, budget_tokens=380)
+    assert "(priority budget: 380 tokens" in md
+    assert "id=run-10-llm1" in md
+    assert "id=run-30-tool-err" in md
+    assert "id=run-40-llm2" in md
+    assert "[omitted 1 step(s)" in md
+    assert "step 2 tool read_file (id=run-20-tool-ok)" in md
+
+    data = narrative_data(runs, budget_tokens=380)
+    assert data["budget_tokens"] == 380
+    kept_ids = [s["run_id"] for s in data["steps"]]
+    assert "run-10-llm1" in kept_ids
+    assert "run-30-tool-err" in kept_ids
+    assert "run-40-llm2" in kept_ids
+    assert [o["run_id"] for o in data["omitted_steps"]] == ["run-20-tool-ok"]
+
+
+def test_narrative_budget_markdown_and_json_select_identical_steps():
+    """MD and JSON share one budget partition: identical kept sets, and each
+    serialized output stays within the declared budget."""
+    root = make_root(trace_id="trace-budget-parity")
+    root.input_messages = [make_msg("human", "Summarize the repo")]
+
+    runs = [root]
+    for i in range(1, 13):
+        llm = make_run(
+            f"{i:02d}-llm",
+            run_type=RunType.LLM,
+            name="ChatOpenAI",
+            parent="root",
+            trace_id="trace-budget-parity",
+            prompt_tokens=1000 + i,
+        )
+        llm.input_messages = [make_msg("human", f"iteration {i} " + "z" * 300)]
+        llm.output_message = Message(role="ai", text=f"step {i} " + "y" * 200)
+        runs.append(llm)
+        if i % 3 == 0:
+            t = make_run(
+                f"{i:02d}-tool",
+                run_type=RunType.TOOL,
+                name="read_file",
+                parent="root",
+                trace_id="trace-budget-parity",
+            )
+            t.inputs = {"path": f"f{i}.py"}
+            t.outputs = {"output": "x" * 2000}
+            runs.append(t)
+
+    budget = 1000
+    md = build_narrative(runs, budget_tokens=budget)
+    data = narrative_data(runs, budget_tokens=budget)
+
+    md_kept = {int(l.split()[2]) for l in md.splitlines() if l.startswith("## Step ")}
+    json_kept = {s["step"] for s in data["steps"]}
+    assert md_kept == json_kept
+    assert len(md) <= budget * 4 + 1  # chars/4 canonical estimate
+    import json as _json
+
+    assert len(_json.dumps(data)) <= budget * 4
