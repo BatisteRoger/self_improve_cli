@@ -239,7 +239,9 @@ def _collect_narrative_steps(
             result = _truncate(tool_result_text(run), _MAX_TOOL_CHARS)
             item = {
                 "type": "tool",
-                "header": f"## Step {step} — tool {run.name} (latency={_latency_s(run)}s, id={run.id})",
+                "header": (
+                    f"## Step {step} — tool {run.name} (latency={_latency_s(run)}s, id={run.id})"
+                ),
                 "args": args,
                 "result": result,
                 "body": f"args: {args}\nresult: {result}",
@@ -252,7 +254,9 @@ def _collect_narrative_steps(
             )
             item = {
                 "type": "node",
-                "header": f"## Step {step} — node {run.name} (latency={_latency_s(run)}s, id={run.id})",
+                "header": (
+                    f"## Step {step} — node {run.name} (latency={_latency_s(run)}s, id={run.id})"
+                ),
                 "output": output,
                 "body": f"output: {output}",
             }
@@ -285,9 +289,7 @@ def _collect_narrative_steps(
             is_compaction_step=item["is_compaction"],
         )
         item["framing"] = max(len(item["header"]) + 4, _BUDGET_JSON_META_CHARS)
-        item["estimated_tokens"] = max(
-            (item["framing"] + len(item["body"])) // _CHARS_PER_TOKEN, 1
-        )
+        item["estimated_tokens"] = max((item["framing"] + len(item["body"])) // _CHARS_PER_TOKEN, 1)
     return items, step
 
 
@@ -306,9 +308,7 @@ def _omitted_batches(
     return batches
 
 
-def _omission_cost(
-    batches: list[list[dict[str, Any]]], compact_markers: bool = False
-) -> int:
+def _omission_cost(batches: list[list[dict[str, Any]]], compact_markers: bool = False) -> int:
     """Canonical chars charged for omissions: one marker per contiguous batch
     plus a per-step entry covering the JSON omitted_steps entries."""
     return sum(

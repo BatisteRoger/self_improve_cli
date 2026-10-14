@@ -908,7 +908,7 @@ def test_narrative_budget_markdown_and_json_select_identical_steps():
     md = build_narrative(runs, budget_tokens=budget)
     data = narrative_data(runs, budget_tokens=budget)
 
-    md_kept = {int(l.split()[2]) for l in md.splitlines() if l.startswith("## Step ")}
+    md_kept = {int(line.split()[2]) for line in md.splitlines() if line.startswith("## Step ")}
     json_kept = {s["step"] for s in data["steps"]}
     assert md_kept == json_kept
     assert len(md) <= budget * 4 + 1  # chars/4 canonical estimate
