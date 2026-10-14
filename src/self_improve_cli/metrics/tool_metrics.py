@@ -31,6 +31,7 @@ _MODIFY_NAME_PATTERN = ("edit", "write", "patch", "update", "replace", "set")
 _MODIFY_ARG_HINTS = ("old_string", "new_string", "content", "patch")
 _REPEAT_THRESHOLD = 3
 _OVERSIZED_TOOL_TOKENS = 2000
+_RETRY_WINDOW = 5
 _CHARS_PER_TOKEN = 4
 
 
@@ -360,29 +361,31 @@ def process_and_friction_signals(
     """Surface deterministic tool/process friction signals with run_id citations.
 
     Detectors:
-    - `failed_retries`: a failed tool call followed by another call to the same
-      tool — distinguishes `identical_args` (maps to `recovery.failed_recovery`)
+    - `failed_retries`: a failed tool call followed, within _RETRY_WINDOW
+      subsequent tool calls, by a call to the same tool on the same extracted
+      target — distinguishes `identical_args` (maps to `recovery.failed_recovery`)
       from `adapted_after_error` (maps to `tool.probabilistic_discovery`).
-    - `oscillations`: A -> B -> A alternation across consecutive tool calls
-      (maps to `control.nonprogress_loop`).
+    - `oscillations`: A -> B -> A -> B alternation (>= 4 consecutive tool calls,
+      maps to `control.nonprogress_loop`). JSON only.
     - `oversized_outputs`: tool outputs >= oversized_tokens (chars/4,
       candidate `harness.observation_pack`).
     """
     sig = significant_runs(runs)
     tools = _tool_runs(sig)
 
-    # 1. Failed-command retries (by tool name sequence)
+    # 1. Failed-command retries: same tool + same extracted target, within
+    # _RETRY_WINDOW subsequent tool calls. Without a target, the key falls back
+    # to the raw args, so only identical-args retries can match.
     failed_retries: list[dict[str, Any]] = []
-    last_failed_by_tool: dict[str, Run] = {}
-    for run in tools:
-        prev_failed = last_failed_by_tool.get(run.name)
-        if prev_failed is not None:
-            prev_args = _tool_args(prev_failed)
-            cur_args = _tool_args(run)
-            target = extract_target_key(run.name, cur_args) or extract_target_key(
-                prev_failed.name, prev_args
-            )
-            if cur_args == prev_args:
+    last_failed: dict[str, tuple[int, Run]] = {}
+    for idx, run in enumerate(tools):
+        cur_args = _tool_args(run)
+        target = extract_target_key(run.name, cur_args)
+        key, _ = _tool_signature_label(run)
+        prev = last_failed.get(key)
+        if prev is not None and idx - prev[0] <= _RETRY_WINDOW:
+            prev_failed = prev[1]
+            if cur_args == _tool_args(prev_failed):
                 failed_retries.append(
                     {
                         "tool": run.name,
@@ -406,20 +409,19 @@ def process_and_friction_signals(
                 )
 
         if _is_agent_error(run):
-            last_failed_by_tool[run.name] = run
+            last_failed[key] = (idx, run)
         else:
-            last_failed_by_tool.pop(run.name, None)
+            last_failed.pop(key, None)
 
-    # 2. Oscillation: contiguous A -> B -> A (-> B ...) alternation
+    # 2. Oscillation: contiguous A -> B -> A -> B (...) alternation, >= 2 cycles
     oscillations: list[dict[str, Any]] = []
     labels = [_tool_signature_label(r) for r in tools]
     i = 0
-    while i + 2 < len(tools):
+    while i + 3 < len(tools):
         key_a, disp_a = labels[i]
         key_b, disp_b = labels[i + 1]
-        key_c, _ = labels[i + 2]
-        if key_a == key_c and key_a != key_b:
-            end = i + 2
+        if key_a != key_b and labels[i + 2][0] == key_a and labels[i + 3][0] == key_b:
+            end = i + 3
             while end + 1 < len(tools):
                 expected = key_b if (end - i) % 2 == 0 else key_a
                 if labels[end + 1][0] == expected:
@@ -429,7 +431,7 @@ def process_and_friction_signals(
             osc_runs = tools[i : end + 1]
             oscillations.append(
                 {
-                    "sequence": [disp_a, disp_b, disp_a],
+                    "sequence": [disp_a, disp_b, disp_a, disp_b],
                     "run_ids": [r.id for r in osc_runs],
                     "length": len(osc_runs),
                     "suggested_pattern": "control.nonprogress_loop",
@@ -547,32 +549,23 @@ def build_tool_metrics(runs: list[Run]) -> str:
         sections.append("")
 
     signals = process_and_friction_signals(runs)
-    if signals["failed_retries"] or signals["oscillations"] or signals["oversized_outputs"]:
+    # Facts only: oscillations and suggested patterns stay in --format json.
+    if signals["failed_retries"] or signals["oversized_outputs"]:
         sections += ["## Process & friction signals", ""]
         for fr in signals["failed_retries"]:
             t_str = f" ({fr['target']})" if fr["target"] else ""
             sections.append(
                 f"Failed retry [{fr['mode']}]: {fr['tool']}{t_str} "
-                f"{fr['failed_run_id']} -> {fr['retry_run_id']} "
-                f"(candidate pattern: {fr['suggested_pattern']})"
-            )
-        for osc in signals["oscillations"]:
-            seq_str = " -> ".join(osc["sequence"])
-            rids = ", ".join(osc["run_ids"])
-            sections.append(
-                f"Oscillation ({osc['length']} calls): {seq_str} "
-                f"[{rids}] (candidate pattern: {osc['suggested_pattern']})"
+                f"{fr['failed_run_id']} -> {fr['retry_run_id']}"
             )
         for ov in signals["oversized_outputs"]:
             t_str = f" ({ov['target']})" if ov["target"] else ""
             sections.append(
                 f"Oversized tool output: {ov['tool']}{t_str} id={ov['run_id']} "
-                f"~{ov['estimated_tokens']:,} tokens "
-                f"(candidate: {ov['suggested_candidate']})"
+                f"~{ov['estimated_tokens']:,} tokens"
             )
         sections.append(
-            "Note: deterministic signals point to candidate patterns — inspect the cited "
-            "run IDs before recording a finding."
+            "Note: deterministic signals — inspect the cited run IDs before recording a finding."
         )
         sections.append("")
 

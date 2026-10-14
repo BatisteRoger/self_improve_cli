@@ -1,5 +1,6 @@
 """Tests for tool metrics."""
 
+from self_improve_cli.domain import Run
 from self_improve_cli.metrics.tool_metrics import (
     build_tool_metrics,
     extract_target_key,
@@ -201,8 +202,50 @@ def test_process_and_friction_signals_retries_oscillation_and_oversized():
     md = build_tool_metrics(runs)
     assert "## Process & friction signals" in md
     assert "Failed retry [identical_args]" in md
-    assert "Oscillation (4 calls)" in md
     assert "Oversized tool output: read_file (bar.py) id=run-7" in md
+    # Oscillations and suggested pattern labels are JSON-only.
+    assert "Oscillation" not in md
+    assert "candidate" not in md
 
     data = tool_metrics_data(runs)
     assert "process_and_friction_signals" in data
+
+
+def _failed_tool(run_id: str, name: str, args: dict) -> Run:
+    run = make_tool(run_id, name, args)
+    run.error = "not found"
+    run.status = "error"
+    return run
+
+
+def test_failed_retry_requires_same_target():
+    """A same-name call on a different target after a failure is not a retry."""
+    runs = [
+        make_root(),
+        _failed_tool("1", "read_file", {"path": "a.py"}),
+        make_tool("2", "read_file", {"path": "b.py"}),
+    ]
+    assert process_and_friction_signals(runs)["failed_retries"] == []
+
+
+def test_failed_retry_requires_window():
+    """A same-target call more than 5 tool calls after the failure is not a retry."""
+    runs = [make_root(), _failed_tool("1", "read_file", {"path": "a.py", "limit": 10})]
+    runs += [make_tool(f"{i}", "list_dir", {"path": f"d{i}"}) for i in range(2, 7)]
+    runs.append(make_tool("7", "read_file", {"path": "a.py", "limit": 20}))
+    assert process_and_friction_signals(runs)["failed_retries"] == []
+
+    within = runs[:3] + [runs[-1]]
+    retries = process_and_friction_signals(within)["failed_retries"]
+    assert [r["mode"] for r in retries] == ["adapted_after_error"]
+
+
+def test_oscillation_requires_two_cycles():
+    """A -> B -> A (3 calls) is not an oscillation; 4 calls are needed."""
+    runs = [
+        make_root(),
+        make_tool("1", "read_file", {"path": "foo.py"}),
+        make_tool("2", "read_file", {"path": "bar.py"}),
+        make_tool("3", "read_file", {"path": "foo.py"}),
+    ]
+    assert process_and_friction_signals(runs)["oscillations"] == []
