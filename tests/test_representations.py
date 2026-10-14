@@ -853,16 +853,19 @@ def test_narrative_budget_prioritizes_anchors_and_errors_over_tool_bulk():
     llm_final.output_message = Message(role="ai", text="Fixed the issue in app.py.")
 
     runs = [root, llm1, tool_bulky, tool_err, llm_final]
-    md = build_narrative(runs, budget_tokens=380)
-    assert "(priority budget: 380 tokens" in md
+    # Calibrated to the canonical overheads: anchors + error fit, the bulky
+    # tool does not, and the marker keeps its run_id preview (window is
+    # roughly 402-412 tokens with the current constants).
+    md = build_narrative(runs, budget_tokens=408)
+    assert "(priority budget: 408 tokens" in md
     assert "id=run-10-llm1" in md
     assert "id=run-30-tool-err" in md
     assert "id=run-40-llm2" in md
     assert "[omitted 1 step(s)" in md
     assert "step 2 tool read_file (id=run-20-tool-ok)" in md
 
-    data = narrative_data(runs, budget_tokens=380)
-    assert data["budget_tokens"] == 380
+    data = narrative_data(runs, budget_tokens=408)
+    assert data["budget_tokens"] == 408
     kept_ids = [s["run_id"] for s in data["steps"]]
     assert "run-10-llm1" in kept_ids
     assert "run-30-tool-err" in kept_ids
