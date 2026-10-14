@@ -71,17 +71,37 @@ def _cmd_narrative(args: argparse.Namespace) -> int:
     step_from = getattr(args, "from_step", None)
     step_to = getattr(args, "to_step", None)
     around = getattr(args, "around_step", None)
+    budget_tokens = getattr(args, "budget", None)
+    if budget_tokens is not None and budget_tokens <= 0:
+        print(
+            "Error: --budget must be a positive integer (estimated token count).",
+            file=sys.stderr,
+        )
+        return EXIT_USAGE
+
     if around is not None:
         step_from = around - 1
         step_to = around + 1
 
     if args.format == "json":
         _output(
-            narrative_data(trace.runs, mode=mode, step_from=step_from, step_to=step_to),
+            narrative_data(
+                trace.runs,
+                mode=mode,
+                step_from=step_from,
+                step_to=step_to,
+                budget_tokens=budget_tokens,
+            ),
             args,
         )
     else:
-        content = build_narrative(trace.runs, mode=mode, step_from=step_from, step_to=step_to)
+        content = build_narrative(
+            trace.runs,
+            mode=mode,
+            step_from=step_from,
+            step_to=step_to,
+            budget_tokens=budget_tokens,
+        )
         _output(content, args)
     return EXIT_OK
 
@@ -266,6 +286,16 @@ def register(sub: argparse._SubParsersAction) -> None:
         type=int,
         metavar="N",
         help="Show steps N-1 to N+1 (convenience for --from/--to).",
+    )
+    p.add_argument(
+        "--budget",
+        dest="budget",
+        type=int,
+        default=None,
+        metavar="TOKENS",
+        help="Priority-ordered token budget (chars/4): keeps user/final reply, "
+        "errors, subagent handoffs, and compaction boundaries first, omitting "
+        "bulky tool outputs when needed.",
     )
     add_common_opts(p)
     p.set_defaults(func=_cmd_narrative)

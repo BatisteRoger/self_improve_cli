@@ -170,6 +170,7 @@ Every command starts compact. Scoping flags bound the output further:
 
 - `skeleton --errors-only` — quick error/cancellation triage
 - `narrative --full` — original common-prefix diff (compact per-index diff is the default)
+- `narrative --budget <tokens>` — priority-ordered token budget (keeps user/final reply, errors, subagent handoffs, and compaction boundaries first)
 - `target-timeline --compact` — tool name + status per step only
 - `run-detail --inputs-only` / `--outputs-only` / `--tool-calls-only` — one section only
 - `context-at --inputs-only` / `--outputs-only` / `--tool <id>` / `--from N --to M` — bounded step view

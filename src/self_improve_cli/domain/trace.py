@@ -36,6 +36,28 @@ class ToolCall:
     id: str | None = None
 
 
+# LangChain serialization leaks class names into role fields (e.g.
+# "aimessagechunk" from AIMessageChunk when a chunked/streamed run is
+# fetched). The canonical model keeps short roles: everything downstream
+# compares against "system"/"human"/"ai"/"tool". Applied at construction so
+# both freshly-fetched and already-stored traces normalize the same way.
+_ROLE_ALIASES = {
+    "aimessage": "ai",
+    "aimessagechunk": "ai",
+    "aichunk": "ai",
+    "assistant": "ai",
+    "humanmessage": "human",
+    "humanmessagechunk": "human",
+    "user": "human",
+    "systemmessage": "system",
+    "systemmessagechunk": "system",
+    "toolmessage": "tool",
+    "toolmessagechunk": "tool",
+    "functionmessage": "function",
+    "functionmessagechunk": "function",
+}
+
+
 @dataclass
 class Message:
     """A normalized message within an LLM run's input or output.
@@ -50,6 +72,11 @@ class Message:
     text: str = ""
     tool_calls: list[ToolCall] = field(default_factory=list)
     tool_call_id: str | None = None
+
+    def __post_init__(self) -> None:
+        canonical = _ROLE_ALIASES.get(self.role.lower())
+        if canonical is not None:
+            self.role = canonical
 
 
 @dataclass

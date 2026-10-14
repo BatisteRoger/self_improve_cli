@@ -8,10 +8,10 @@ from typing import Any
 from self_improve_cli.domain import Run, RunType
 from self_improve_cli.representations.common import (
     _MAX_TOOL_CHARS,
-    _is_infra_error,
-    _tool_result_text,
     _truncate,
+    is_infra_error,
     significant_runs,
+    tool_result_text,
 )
 
 
@@ -68,7 +68,7 @@ def target_timeline(runs: list[Run], target: str, *, compact: bool = False) -> s
         else:
             args = json.dumps(run.inputs, default=str, ensure_ascii=False)
             result = (
-                _tool_result_text(run)
+                tool_result_text(run)
                 if run.run_type == RunType.TOOL
                 else json.dumps(run.outputs, default=str, ensure_ascii=False)
             )
@@ -106,7 +106,7 @@ def target_timeline_data(runs: list[Run], target: str, *, compact: bool = False)
                 json.dumps(r.inputs, default=str, ensure_ascii=False), _MAX_TOOL_CHARS
             )
             entry["result"] = _truncate(
-                _tool_result_text(r)
+                tool_result_text(r)
                 if r.run_type == RunType.TOOL
                 else json.dumps(r.outputs, default=str, ensure_ascii=False),
                 _MAX_TOOL_CHARS,
@@ -124,7 +124,7 @@ def target_timeline_data(runs: list[Run], target: str, *, compact: bool = False)
 
 def _is_infra_cancelled(error: str | None) -> bool:
     """Check if an error is an infra-cancelled (not an agent failure)."""
-    return bool(error) and _is_infra_error(error)
+    return bool(error) and is_infra_error(error)
 
 
 def error_neighborhood(runs: list[Run], *, window: int = 1) -> str:

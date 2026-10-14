@@ -269,6 +269,38 @@ def test_narrative_json_step_range(saved_trace, capsys):
     assert all(s["step"] >= 2 for s in data["steps"])
 
 
+def test_narrative_budget_and_invalid_budget(saved_trace, capsys):
+    """narrative --budget filters steps by priority and rejects non-positive values."""
+    trace_id, data_dir = saved_trace
+    assert main(["narrative", trace_id, "--data-dir", str(data_dir), "--budget", "500"]) == 0
+    out = capsys.readouterr().out
+    assert "(priority budget: 500 tokens" in out
+
+    assert (
+        main(
+            [
+                "narrative",
+                trace_id,
+                "--data-dir",
+                str(data_dir),
+                "--format",
+                "json",
+                "--budget",
+                "500",
+            ]
+        )
+        == 0
+    )
+    data = json.loads(capsys.readouterr().out)
+    assert data["budget_tokens"] == 500
+    assert "omitted_steps" in data
+
+    # Non-positive budget returns EXIT_USAGE (2)
+    assert main(["narrative", trace_id, "--data-dir", str(data_dir), "--budget", "0"]) == 2
+    err = capsys.readouterr().err
+    assert "--budget must be a positive integer" in err
+
+
 def test_run_detail_command(saved_trace, capsys):
     trace_id, data_dir = saved_trace
     assert main(["run-detail", trace_id, "run-llm-2", "--data-dir", str(data_dir)]) == 0

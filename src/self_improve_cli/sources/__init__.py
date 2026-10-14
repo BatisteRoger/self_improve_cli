@@ -70,7 +70,13 @@ def _content_text(content: Any) -> str:
 def _normalize_message(m: dict[str, Any]) -> dict[str, Any]:
     """Normalize a serialized message (LC constructor format or plain dict)."""
     if "kwargs" in m and "id" in m and isinstance(m["id"], list):
-        role = str(m["id"][-1]).removesuffix("Message").lower()
+        role = (
+            str(m["id"][-1])
+            .removesuffix("MessageChunk")
+            .removesuffix("Message")
+            .removesuffix("Chunk")
+            .lower()
+        )
         kw = m["kwargs"]
     else:
         role = m.get("type") or m.get("role") or "?"

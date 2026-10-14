@@ -28,6 +28,12 @@ _JUMP_THRESHOLD = 5000
 _DROP_RATIO = 0.20
 _STALE_TOOL_RESULT_K = 5
 _CHARS_PER_TOKEN = 4
+_LIFECYCLE_MIN_TOKENS = 250
+_LIFECYCLE_DUP_MIN_TOKENS = 50
+_LIFECYCLE_TOP_N = 3
+# Markdown shows the lifecycle section only when a non-system item re-pays at
+# least this many tokens (or duplicate tool outputs exist). JSON is unconditional.
+_LIFECYCLE_MD_MIN_REPAID = 1000
 
 
 # --- Helpers ----------------------------------------------------------------
@@ -294,6 +300,187 @@ def growth_curve(runs: list[Run]) -> dict[str, Any]:
     return _growth_curve(significant_runs(runs))
 
 
+# --- 4. Token-cost lifecycle (approximate) -----------------------------------
+
+
+def _token_lifecycle(
+    sig: list[Run],
+    min_tokens: int = _LIFECYCLE_MIN_TOKENS,
+) -> dict[str, Any]:
+    """Track introduced content longevity, repeated exposure, duplication, and churn.
+
+    Operates over main-loop LLM steps (APPROXIMATE, chars/4):
+    - `items`: individual messages/tool results with estimated size >= min_tokens,
+      ranked by cumulative re-paid tokens across subsequent steps.
+    - `duplicate_tool_outputs`: identical tool outputs (>= _LIFECYCLE_DUP_MIN_TOKENS)
+      occupying the same step's context under multiple tool calls.
+    - `churn_events`: content (>= _LIFECYCLE_DUP_MIN_TOKENS) present at an early step,
+      dropped at an intermediate step (e.g. compaction), and re-introduced later.
+
+    Drops (items' `dropped_at_step` and churn) only compare steps of the same
+    logical node, identified by the first input message (inferred). A step from
+    another graph node interleaved between two steps is not a drop.
+    """
+    llm_runs = _main_loop_llm_runs(sig)
+    if not llm_runs:
+        return {
+            "items": [],
+            "duplicate_tool_outputs": [],
+            "churn_events": [],
+        }
+
+    name_by_id: dict[str, str] = {}
+    for r in llm_runs:
+        name_by_id.update(_tool_name_by_call_id(r))
+
+    # Logical node per step: same first input message = same graph node (inferred).
+    node_steps: dict[tuple[str, str], list[int]] = {}
+    node_of_step: list[tuple[str, str]] = []
+    for step_idx, r in enumerate(llm_runs):
+        first = r.input_messages[0] if r.input_messages else None
+        node = (first.role, first.text) if first else ("", "")
+        node_of_step.append(node)
+        node_steps.setdefault(node, []).append(step_idx)
+
+    # Track unique message instances: key = (role, tool_call_id_or_idx, text)
+    item_meta: dict[tuple[str, str, str], dict[str, Any]] = {}
+    # Track content-level presence across steps for churn detection: key = (source, text)
+    content_steps: dict[tuple[str, str], set[int]] = {}
+    # Track duplicate tool outputs within the same step: key = (tool_name, text)
+    dup_tracker: dict[tuple[str, str], dict[str, Any]] = {}
+
+    for step_idx, llm_run in enumerate(llm_runs):
+        step_tool_contents: dict[tuple[str, str], list[str]] = {}
+        non_tool_counts: dict[tuple[str, str], int] = {}
+
+        for msg in llm_run.input_messages:
+            est = _estimate_tokens(msg.text)
+            if est <= 0:
+                continue
+
+            if msg.role == "tool":
+                tname = name_by_id.get(msg.tool_call_id or "", msg.tool_call_id or "?")
+                source = f"tool:{tname}"
+                call_id = msg.tool_call_id or ""
+                item_key = ("tool", call_id, msg.text)
+                if est >= _LIFECYCLE_DUP_MIN_TOKENS:
+                    step_tool_contents.setdefault((tname, msg.text), []).append(call_id)
+            else:
+                source = msg.role
+                call_id = None
+                occ = non_tool_counts.get((msg.role, msg.text), 0)
+                non_tool_counts[(msg.role, msg.text)] = occ + 1
+                item_key = (msg.role, str(occ), msg.text)
+
+            entry = item_meta.get(item_key)
+            if entry is None:
+                entry = {
+                    "role": msg.role,
+                    "source": source,
+                    "tool_call_id": call_id,
+                    "tokens": est,
+                    "steps": set(),
+                }
+                item_meta[item_key] = entry
+            entry["steps"].add(step_idx)
+
+            if est >= _LIFECYCLE_DUP_MIN_TOKENS:
+                content_steps.setdefault((source, msg.text), set()).add(step_idx)
+
+        for (tname, text), call_ids in step_tool_contents.items():
+            if len(call_ids) >= 2:
+                est = _estimate_tokens(text)
+                existing = dup_tracker.get((tname, text))
+                if existing is None:
+                    dup_tracker[(tname, text)] = {
+                        "tool": tname,
+                        "first_step": step_idx,
+                        "copies": len(call_ids),
+                        "tokens_per_copy": est,
+                        "duplicate_tokens": est * (len(call_ids) - 1),
+                        "tool_call_ids": [cid for cid in call_ids if cid],
+                    }
+                elif len(call_ids) > existing["copies"]:
+                    existing["copies"] = len(call_ids)
+                    existing["duplicate_tokens"] = est * (len(call_ids) - 1)
+                    existing["tool_call_ids"] = [cid for cid in call_ids if cid]
+
+    items: list[dict[str, Any]] = []
+    for entry in item_meta.values():
+        est = entry["tokens"]
+        if est < min_tokens:
+            continue
+        steps_sorted = sorted(entry["steps"])
+        intro = steps_sorted[0]
+        last = steps_sorted[-1]
+        count = len(steps_sorted)
+        steps_set = entry["steps"]
+        dropped_at = next(
+            (s for s in node_steps[node_of_step[intro]] if s > intro and s not in steps_set),
+            None,
+        )
+        items.append(
+            {
+                "role": entry["role"],
+                "source": entry["source"],
+                "tool_call_id": entry["tool_call_id"],
+                "introduced_step": intro,
+                "last_step": last,
+                "steps_present": count,
+                "dropped_at_step": dropped_at,
+                "tokens": est,
+                "cumulative_tokens": est * count,
+                "repaid_tokens": est * (count - 1),
+            }
+        )
+
+    items.sort(key=lambda x: (-x["repaid_tokens"], -x["cumulative_tokens"], x["introduced_step"]))
+
+    churn_events: list[dict[str, Any]] = []
+    for (source, text), steps_set in content_steps.items():
+        for positions in node_steps.values():
+            present = [i for i, s in enumerate(positions) if s in steps_set]
+            gap = next(
+                ((a, b) for a, b in zip(present, present[1:], strict=False) if b > a + 1),
+                None,
+            )
+            if gap is None:
+                continue
+            churn_events.append(
+                {
+                    "source": source,
+                    "tokens": _estimate_tokens(text),
+                    "introduced_step": positions[present[0]],
+                    "dropped_at_step": positions[gap[0] + 1],
+                    "reintroduced_at_step": positions[gap[1]],
+                }
+            )
+            break
+
+    churn_events.sort(key=lambda x: (-x["tokens"], x["dropped_at_step"]))
+    duplicates = sorted(dup_tracker.values(), key=lambda x: -x["duplicate_tokens"])
+
+    return {
+        "items": items,
+        "duplicate_tool_outputs": duplicates,
+        "churn_events": churn_events,
+    }
+
+
+def token_lifecycle(
+    runs: list[Run],
+    min_tokens: int = _LIFECYCLE_MIN_TOKENS,
+) -> dict[str, Any]:
+    """Token-cost lifecycle over main-loop LLM steps (approximate).
+
+    Tracks where large context items were introduced, how many subsequent steps
+    re-submitted them (cumulative and re-paid token cost), whether identical tool
+    outputs occupied context simultaneously, and whether dropped content was
+    re-introduced later (context churn).
+    """
+    return _token_lifecycle(significant_runs(runs), min_tokens=min_tokens)
+
+
 # --- Markdown assembly ------------------------------------------------------
 
 
@@ -402,6 +589,49 @@ def build_context_metrics(runs: list[Run]) -> str:
         )
         sections.append("")
 
+    # 3. Token-cost lifecycle
+    # Bounded: shown only above a re-paid threshold; churn and the full lists
+    # stay in --format json.
+    lifecycle = _token_lifecycle(sig)
+    md_items = [i for i in lifecycle["items"] if i["role"] != "system" and i["repaid_tokens"] > 0]
+    dups = lifecycle["duplicate_tool_outputs"]
+    if dups or any(i["repaid_tokens"] >= _LIFECYCLE_MD_MIN_REPAID for i in md_items):
+        sections += ["## Token-cost lifecycle (approximate)", ""]
+        for item in md_items[:_LIFECYCLE_TOP_N]:
+            call_ref = f" ({item['tool_call_id']})" if item["tool_call_id"] else ""
+            drop_ref = (
+                f" [dropped at step {item['dropped_at_step']}]"
+                if item["dropped_at_step"] is not None
+                else ""
+            )
+            sections.append(
+                f"Steps {item['introduced_step']}-{item['last_step']} | "
+                f"{item['source']}{call_ref} | ~{_fmt_k(item['tokens'])} x "
+                f"{item['steps_present']} steps, ~{_fmt_k(item['repaid_tokens'])} re-paid"
+                f"{drop_ref}"
+            )
+        extra_items = len(md_items) - _LIFECYCLE_TOP_N
+        if extra_items > 0:
+            sections.append(f"... ({extra_items} more items, see --format json)")
+
+        for dup in dups[:_LIFECYCLE_TOP_N]:
+            cids = f" ({', '.join(dup['tool_call_ids'])})" if dup["tool_call_ids"] else ""
+            sections.append(
+                f"Duplicate tool output at step {dup['first_step']}: "
+                f"{dup['tool']} x{dup['copies']}{cids} "
+                f"(~{_fmt_k(dup['duplicate_tokens'])} redundant tokens)"
+            )
+        if len(dups) > _LIFECYCLE_TOP_N:
+            sections.append(
+                f"... ({len(dups) - _LIFECYCLE_TOP_N} more duplicates, see --format json)"
+            )
+
+        sections += [
+            "",
+            "Note: APPROXIMATE (chars/4), ignores prefix-caching; not proof of unused content.",
+            "",
+        ]
+
     return "\n".join(sections) + "\n"
 
 
@@ -439,6 +669,7 @@ def context_metrics_data(runs: list[Run]) -> dict[str, Any]:
         "token_decomposition": steps,
         "prefix_invariance": prefix_invariance(runs),
         "growth_curve": curve,
+        "token_lifecycle": _token_lifecycle(sig),
         "notes": {
             "token_categories": "chars/4 estimates (APPROXIMATE)",
             "overhead": "Residual vs real prompt_tokens (tool schemas + estimation error)",
@@ -450,6 +681,13 @@ def context_metrics_data(runs: list[Run]) -> dict[str, Any]:
             "prefix_invariance": (
                 "Longest char-level common prefix between a step's input and any earlier "
                 "step's, chars/4 (APPROXIMATE). Upper bound of content re-paid per step."
+            ),
+            "token_lifecycle": (
+                "Payload retention across main-loop steps, chars/4 (APPROXIMATE). "
+                "Cumulative tokens do not account for provider prefix-caching; long "
+                "retention signals potentially avoidable context, not unused content. "
+                "Drops and churn compare only steps of the same logical node (same "
+                "first input message, inferred)."
             ),
         },
     }
