@@ -33,7 +33,7 @@ _INFRA_ERROR_MARKERS = (
 )
 
 
-def _is_infra_error(error: str) -> bool:
+def is_infra_error(error: str) -> bool:
     """Return True if the error string matches a known infra/harness marker."""
     error_lower = error.lower()
     return any(marker.lower() in error_lower for marker in _INFRA_ERROR_MARKERS)
@@ -42,7 +42,7 @@ def _is_infra_error(error: str) -> bool:
 def _format_error(error: str, limit: int) -> str:
     """Format a run error, labeling infra-cancelled errors distinctly."""
     truncated = _truncate(error, limit)
-    if _is_infra_error(error):
+    if is_infra_error(error):
         return f" ERROR (infra-cancelled, not an agent failure): {truncated}"
     return f" ERROR: {truncated}"
 
@@ -77,7 +77,7 @@ def _format_tool_calls(tool_calls: list) -> str:
     return "\n".join(lines)
 
 
-def _tool_result_text(run: Run) -> str:
+def tool_result_text(run: Run) -> str:
     """Best-effort extraction of a tool run's result."""
     outputs = run.outputs or {}
     output = outputs.get("output", outputs)

@@ -20,7 +20,7 @@ from typing import Any
 
 from self_improve_cli.domain import Run, RunType
 from self_improve_cli.representations import significant_runs
-from self_improve_cli.representations.common import _is_infra_error, _tool_result_text
+from self_improve_cli.representations.common import is_infra_error, tool_result_text
 
 # --- Configurable heuristics ------------------------------------------------
 
@@ -270,7 +270,7 @@ def _merged_duration(intervals: list[tuple[float, float]]) -> float:
 def _is_agent_error(run: Run) -> bool:
     """True when a run errored and the error is not an infra cancellation."""
     if run.error:
-        return not _is_infra_error(str(run.error))
+        return not is_infra_error(str(run.error))
     return run.status == "error"
 
 
@@ -444,7 +444,7 @@ def process_and_friction_signals(
     # 3. Oversized tool outputs
     oversized_outputs: list[dict[str, Any]] = []
     for run in tools:
-        res_text = _tool_result_text(run)
+        res_text = tool_result_text(run)
         est_tokens = len(res_text) // _CHARS_PER_TOKEN
         if est_tokens >= oversized_tokens:
             oversized_outputs.append(

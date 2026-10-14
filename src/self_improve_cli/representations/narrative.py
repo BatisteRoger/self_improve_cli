@@ -13,9 +13,9 @@ from self_improve_cli.representations.common import (
     _format_tool_calls,
     _latency_s,
     _message_signature,
-    _tool_result_text,
     _truncate,
     significant_runs,
+    tool_result_text,
 )
 
 
@@ -236,7 +236,7 @@ def _collect_narrative_steps(
             args = _truncate(
                 json.dumps(run.inputs, default=str, ensure_ascii=False), _MAX_TOOL_CHARS
             )
-            result = _truncate(_tool_result_text(run), _MAX_TOOL_CHARS)
+            result = _truncate(tool_result_text(run), _MAX_TOOL_CHARS)
             item = {
                 "type": "tool",
                 "header": f"## Step {step} — tool {run.name} (latency={_latency_s(run)}s, id={run.id})",
