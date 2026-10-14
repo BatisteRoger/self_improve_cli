@@ -46,6 +46,9 @@ class _FakeSource:
     def list_projects(self, limit: int = 50):
         return []
 
+    def fetch_feedback(self, trace_id: str):
+        return []
+
 
 @pytest.fixture
 def saved_trace(tmp_path, monkeypatch):

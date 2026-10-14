@@ -16,6 +16,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from self_improve_cli.domain import (
+    FeedbackScore,
     Message,
     ProjectSummary,
     Run,
@@ -292,6 +293,16 @@ def _sdk_run_to_canonical(sdk_run: Any) -> Run:
     )
 
 
+_FEEDBACK_LIMIT = 100
+
+
+def _sdk_feedback_to_score(fb: Any) -> FeedbackScore:
+    """Keep key + numeric score only (bool counts as 0/1)."""
+    score = getattr(fb, "score", None)
+    numeric = float(score) if isinstance(score, (bool, int, float)) else None
+    return FeedbackScore(key=str(getattr(fb, "key", "")), score=numeric)
+
+
 class LangSmithSource(TraceSource):
     """LangSmith trace source. Requires LANGSMITH_API_KEY in the environment."""
 
@@ -521,6 +532,19 @@ class LangSmithSource(TraceSource):
             time.monotonic() - start,
         )
         return RunResolution(trace_id=trace_id, project_id=project_id)
+
+    def fetch_feedback(self, trace_id: str) -> list[FeedbackScore]:
+        """Return feedback scores on the trace's root run (root run ID == trace ID).
+
+        Only key and numeric score cross the boundary: comments and free-text
+        values are not anonymized and are dropped here.
+        """
+        client = self._get_client()
+        logger.info("Listing feedback for trace %s", trace_id)
+        return [
+            _sdk_feedback_to_score(fb)
+            for fb in client.list_feedback(run_ids=[trace_id], limit=_FEEDBACK_LIMIT)
+        ]
 
     def list_projects(self, limit: int = 50) -> list[ProjectSummary]:
         """List accessible LangSmith projects, most recent first."""

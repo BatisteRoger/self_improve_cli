@@ -221,6 +221,12 @@ self-improve assess <trace_id> --task "Fix the login bug" --outcome success --so
 - `--source`: `human` | `test` | `evaluator` | `unknown`
 - `--notes`: free-form notes about what was produced, verified, or remains unknown
 
+`fetch` pre-fills the assessment: `task` from the first human message of the
+sanitized root input; `outcome` + `source: evaluator` only when all recorded
+feedback scores are binary and agree (all 1 -> success, all 0 -> fail), else
+`unknown` with the scores cited in `notes`. It fills empty fields only and
+never touches a `source: human` assessment.
+
 Show the current assessment:
 
 ```bash
