@@ -6,6 +6,7 @@ import pytest
 
 from self_improve_cli.cli.main import main
 from self_improve_cli.domain import Assessment, OutcomeSource, OutcomeStatus, RunType, Trace
+from self_improve_cli.metrics.efficiency import efficiency_summary
 from self_improve_cli.metrics.gate import (
     EfficiencyStatus,
     QualityStatus,
@@ -17,7 +18,7 @@ from self_improve_cli.storage import TraceStore
 from tests.helpers import make_root, make_run
 
 
-def _save(store: TraceStore, trace_id: str, tokens: list[int], tools: int = 0) -> None:
+def _save(store: TraceStore, trace_id: str, tokens: list[int | None], tools: int = 0) -> None:
     runs = [make_root(trace_id=trace_id)]
     runs += [
         make_run(f"l{i}", run_type=RunType.LLM, total_tokens=t, trace_id=trace_id)
@@ -137,6 +138,35 @@ def test_gate_inconclusive_on_cost_regression(store, tmp_path, capsys):
     data = json.loads(capsys.readouterr().out)
     assert data["efficiency"]["status"] == "degraded"
     assert data["efficiency"]["metrics"]["tokens"]["direction"] == "up"
+
+
+@pytest.mark.parametrize("after_tokens", [[None, None], [None, 500]], ids=["all", "partial"])
+def test_gate_missing_tokens_are_unavailable_not_improved(store, tmp_path, capsys, after_tokens):
+    _save(store, "after", after_tokens, tools=3)
+    _assess(store, "before", OutcomeStatus.SUCCESS)
+    _assess(store, "after", OutcomeStatus.SUCCESS)
+    _gate(tmp_path)
+    data = json.loads(capsys.readouterr().out)
+    tokens = data["efficiency"]["metrics"]["tokens"]
+    assert tokens["direction"] == "unavailable"
+    assert tokens["after"] is None
+    assert data["efficiency"]["status"] != "improved"
+    assert "tokens: unavailable on at least one side, not judged." in data["efficiency"]["reasons"]
+
+    _gate(tmp_path, "markdown")
+    out = capsys.readouterr().out
+    assert "tokens: unavailable on at least one side, not judged." in out
+    assert "tokens down" not in out
+
+
+def test_efficiency_summary_tokens_none_when_any_llm_run_lacks_usage():
+    def llm(idx: str, total: int | None):
+        return make_run(idx, run_type=RunType.LLM, total_tokens=total, trace_id="t")
+
+    root = make_root(trace_id="t")
+    assert efficiency_summary([root, llm("1", 100), llm("2", 50)]).tokens == 150
+    assert efficiency_summary([root, llm("1", 100), llm("2", None)]).tokens is None
+    assert efficiency_summary([root, llm("1", None)]).tokens is None
 
 
 def test_gate_json_shape(store, tmp_path, capsys):

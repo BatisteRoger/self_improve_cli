@@ -76,6 +76,7 @@ def _cmd_compare(args: argparse.Namespace) -> int:
     eff_a = efficiency_summary(trace_a.runs)
     eff_b = efficiency_summary(trace_b.runs)
     tokens_a, tokens_b = eff_a.tokens, eff_b.tokens
+    token_delta = tokens_b - tokens_a if tokens_a is not None and tokens_b is not None else None
     llm_a, llm_b = eff_a.llm_calls, eff_b.llm_calls
     latency_a, latency_b = eff_a.latency_ms, eff_b.latency_ms
     tools_a, tools_b = eff_a.tool_calls, eff_b.tool_calls
@@ -89,7 +90,7 @@ def _cmd_compare(args: argparse.Namespace) -> int:
         result = {
             "trace_a": args.trace_a,
             "trace_b": args.trace_b,
-            "token_delta": tokens_b - tokens_a,
+            "token_delta": token_delta,
             "latency_delta_ms": (latency_b - latency_a) if latency_a and latency_b else None,
             "llm_calls_a": llm_a,
             "llm_calls_b": llm_b,
@@ -100,12 +101,18 @@ def _cmd_compare(args: argparse.Namespace) -> int:
         }
         print(json.dumps(result, indent=2, default=str, ensure_ascii=False))
     else:
+
+        def _tok(n: int | None) -> str:
+            return "n/a" if n is None else f"{n:,}"
+
         lines = [
             "# Trace comparison",
             "",
             f"| Metric | Trace A ({args.trace_a[:8]}) | Trace B ({args.trace_b[:8]}) | Delta |",
             "| --- | ---: | ---: | ---: |",
-            f"| Total tokens | {tokens_a:,} | {tokens_b:,} | {tokens_b - tokens_a:+,} |",
+            f"| Total tokens | {_tok(tokens_a)} | {_tok(tokens_b)} | "
+            + ("n/a" if token_delta is None else f"{token_delta:+,}")
+            + " |",
             f"| LLM calls | {llm_a} | {llm_b} | {llm_b - llm_a:+d} |",
             f"| Latency | {latency_a}ms | {latency_b}ms | "
             + (f"{(latency_b - latency_a):+d}ms" if latency_a and latency_b else "N/A")

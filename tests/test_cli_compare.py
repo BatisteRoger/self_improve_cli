@@ -152,6 +152,27 @@ def test_compare_command_both_no_skill(tmp_path, capsys):
     assert data["token_delta"] == 0
 
 
+def test_compare_command_missing_token_usage(two_traces, capsys):
+    """compare renders unavailable tokens as n/a (Markdown) and null (JSON)."""
+    trace_a, _, data_dir = two_traces
+    no_usage = Trace(
+        trace_id="trace-no-usage",
+        runs=[make_root(trace_id="trace-no-usage"), make_run("1", run_type=RunType.LLM)],
+        sanitized=True,
+        sanitization_report={"entity_counts": {}, "complete": True},
+        source="test",
+    )
+    TraceStore(data_root=data_dir).save_sanitized(no_usage)
+    args = ["compare", trace_a, "trace-no-usage", "--data-dir", str(data_dir)]
+
+    assert main([*args, "--format", "json"]) == 0
+    assert json.loads(capsys.readouterr().out)["token_delta"] is None
+
+    assert main([*args, "--format", "markdown"]) == 0
+    out = capsys.readouterr().out
+    assert "| Total tokens | 3,510 | n/a | n/a |" in out
+
+
 # --- skill-check command ----------------------------------------------------
 
 

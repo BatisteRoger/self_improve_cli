@@ -4,6 +4,8 @@ Shared by `compare` (side-by-side table) and `gate` (before/after verdict).
 Totals are computed over significant runs only, like the other metrics.
 Latency is wall-clock from the first significant run's start to the latest
 end time; it is None when timestamps are missing or unparsable.
+Tokens are None when any significant LLM run lacks `total_tokens`: a
+partial sum would read as a cost drop, so "not recorded" stays unavailable.
 """
 
 from __future__ import annotations
@@ -18,9 +20,13 @@ from self_improve_cli.representations import significant_runs
 
 @dataclass
 class EfficiencySummary:
-    """Efficiency totals for one trace."""
+    """Efficiency totals for one trace.
 
-    tokens: int
+    `tokens` is None when any significant LLM run has no recorded
+    `total_tokens` (usage unavailable, not zero).
+    """
+
+    tokens: int | None
     llm_calls: int
     latency_ms: int | None
     tool_calls: dict[str, int]
@@ -49,7 +55,11 @@ def efficiency_summary(runs: list[Run]) -> EfficiencySummary:
     sig = significant_runs(runs)
     llm = [r for r in sig if r.run_type.value == "llm"]
     return EfficiencySummary(
-        tokens=sum(r.total_tokens or 0 for r in llm),
+        tokens=(
+            None
+            if any(r.total_tokens is None for r in llm)
+            else sum(r.total_tokens or 0 for r in llm)
+        ),
         llm_calls=len(llm),
         latency_ms=_latency_ms(sig),
         tool_calls=tool_call_counts(runs),
