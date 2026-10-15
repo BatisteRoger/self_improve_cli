@@ -41,6 +41,7 @@ a template.
 | "Could this work have been mechanical?" | `context-at` for the step (was the answer already knowable?) | `run-detail` on the tool run (constraint in the error vs in the schema); `target-timeline` (did the target change?) |
 | "Is this trace clean?" | `skeleton --errors-only` (quick triage) | `tool-metrics` and `context-metrics` for redundancy/anomalies, `error-neighborhood` for error recovery |
 | "Did the agent recover from that error?" | `error-neighborhood` | `run-detail` on the error and the next step |
+| "I changed something: did the re-run take a different path?" | `diff <trace_a> <trace_b>` (aligned steps, divergence blocks, run IDs on both sides) | `run-detail` on each side of a divergence; `compare` for totals |
 | "What should I inspect next?" | The signal you already have (a metric, a run ID) | A specific run reference, not a generic checklist |
 
 ## Stopping rules
@@ -91,7 +92,12 @@ requirement — skip levels when you already know where to look.
   isolate one tool result.
 
 `compare <trace_a> <trace_b>` sits beside the ladder for A/B testing two
-traces (tokens, latency, tool calls, skills).
+traces (tokens, latency, tool calls, skills). `diff <trace_a> <trace_b>`
+is its step-level counterpart: where the two trajectories diverged.
+`gate <trace_before> <trace_after>` turns the pair into a verdict
+(pass / fail / inconclusive, exit 0/1/2) from both `assess` outcomes and
+the `compare` totals — record an outcome on both traces first, or the
+verdict is inconclusive.
 
 ## Principles
 

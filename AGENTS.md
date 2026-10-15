@@ -81,7 +81,7 @@ Dependency direction: `source -> canonical model -> privacy/storage -> determini
 - `sources/` — a `TraceSource` protocol plus the initial LangSmith adapter. SDK-specific objects stop at this boundary.
 - `privacy/` — anonymization policy, recognizers, placeholder mapping, and sanitization reports. Internally split into `patterns` (regex), `presidio_adapter` (NLP), `placeholders` (stable mapping), `report` (summary), and `redact` (recursive application + backend merge).
 - `storage/` — safe local artifact layout, atomic writes, metadata, and raw-retention controls. `base.py` (paths + serialization) plus per-area mixins: `traces`, `records`, `ter`, `prompts`, `ati`; `TraceStore` composes them.
-- `representations/` — deterministic L0/L1/L2/L3 TER builders over canonical sanitized data. One module per view (`skeleton`, `narrative`, `run_detail`, `context_at`, `navigation`, `tools`) over `common` helpers; `ter.py` writes all derived files. Public names re-exported from `__init__.py`.
+- `representations/` — deterministic L0/L1/L2/L3 TER builders over canonical sanitized data. One module per view (`skeleton`, `narrative`, `run_detail`, `context_at`, `navigation`, `trace_diff`, `tools`) over `common` helpers; `ter.py` writes all derived files. Public names re-exported from `__init__.py`.
 - `metrics/` — tool, context, and skill metrics, each labeled with its approximation and assumptions.
 - `cli/` — command parsing, stable exit codes, stdout/stderr rules, Markdown/JSON output, and agent-oriented help. `main.py` is a thin entry point; handlers and parser registration live per command family in `common` (shared plumbing), `discovery`, `views`, `metrics`, `records`, `prompts`, `ati`, `system`. Each module exposes `register(sub)`.
 
@@ -137,11 +137,13 @@ governs both.
 | `context-at` | ✓ step index | ✓ bounded preview, `--inputs-only/--outputs-only` (mutually exclusive), `--tool <id>`, `--full` | prev/next step, run-detail | ✓ inferred labels | ✓ lists valid steps, enforces `--from/--to` pairing | ✓ structured |
 | `target-timeline` | ✓ | ✓ truncation markers, `--compact` | run IDs per touch | ✓ | ✓ reports no matches | ✓ structured |
 | `error-neighborhood` | ✓ | ✓ window-bounded | run IDs, next step | ✓ excludes infra-cancelled | n/a | ✓ structured |
+| `diff` | ✓ narrative step numbers (`A#N = B#M`) | ✓ unchanged runs collapsed, divergence blocks capped at 10 steps per side with `narrative --from/--to` markers, `--full` | run IDs on both sides | ✓ alignment by `(run_type, name)` stated; no scoring | ✓ same ID, empty trace, unknown trace | ✓ structured |
 | `tool-metrics` | ✓ | ✓ friction section only when retries/oversized outputs exist; oscillations and pattern labels JSON-only | run IDs on retry/oversized signals | ✓ approximate + merged parallel latency; retries need same target within 5 calls | n/a | ✓ structured |
 | `context-metrics` | ✓ | ✓ lifecycle section only above re-paid threshold or with duplicates, top 3 non-system items + top 3 duplicates; churn JSON-only | step indices + `tool_call_id`s | ✓ approximate labels; drops/churn scoped to the same node (inferred) | n/a | ✓ structured |
 | `skill-metrics` | ✓ | ✓ | step indices | ✓ approximate labels | n/a | ✓ structured |
 | `tools` | ✓ | ✓ `--detail` | tool names | ✓ | n/a | markdown-wrapped (tabular) |
 | `compare` | ✓ | ✓ | trace IDs | ✓ | n/a | ✓ structured |
+| `gate` | ✓ before/after order | ✓ verdict + per-axis reasons | `diff`/`compare`/`assess` next commands | ✓ missing/unknown outcome = inconclusive; efficiency labeled approximate | ✓ same ID, unknown trace | ✓ structured; exit 0/1/2 mirrors verdict |
 | `skill-check` | ✓ | ✓ | n/a | ✓ | ✓ suggests skill-metrics | ✓ structured |
 | `assess` | ✓ | ✓ | n/a | ✓ | ✓ suggests `--task` | JSON in both formats |
 | `finding` | ✓ subcommands like `ati`/`prompt` | ✓ compact list, JSON for full | finding IDs, run IDs in evidence | ✓ free-string pattern/locus documented | ✓ suggests `finding list` | ✓ structured |
@@ -221,6 +223,12 @@ self-improve assess <trace_id> --task "Fix the login bug" --outcome success --so
 - `--source`: `human` | `test` | `evaluator` | `unknown`
 - `--notes`: free-form notes about what was produced, verified, or remains unknown
 
+`fetch` pre-fills the assessment: `task` from the first human message of the
+sanitized root input; `outcome` + `source: evaluator` only when all recorded
+feedback scores are binary and agree (all 1 -> success, all 0 -> fail), else
+`unknown` with the scores cited in `notes`. It fills empty fields only and
+never touches a `source: human` assessment.
+
 Show the current assessment:
 
 ```bash
@@ -274,6 +282,17 @@ self-improve finding clear <trace_id>
 
 Finding IDs are sequential (`f1`, `f2`, ...) so reports and later commands
 can cite them stably. `info` reports the findings count and IDs.
+
+### Before/after gate
+
+`gate <trace_before> <trace_after>` is the receipt of one improvement-loop iteration: a verdict for a human gate, not a decision.
+
+- **Quality**: the `assess` outcome on each side, ranked success > partial > fail. A missing assessment or an `unknown` outcome on either side makes quality unknown — never guessed.
+- **Efficiency** (approximate, single traces): tokens, latency, tool-call count from the `compare` totals (`metrics/efficiency.py`). Any increase counts as degraded; no noise tolerance.
+- **Verdict rule** (`metrics/gate.py::decide_verdict`): quality regressed -> `fail`; quality unknown -> `inconclusive`; quality improved -> `pass`; quality stable + efficiency improved/equal -> `pass`; quality stable + efficiency degraded -> `inconclusive` (a cost increase may be deliberate).
+- **Exit code mirrors the verdict**: 0 pass, 1 fail, 2 inconclusive. Errors (unknown trace, same ID twice) also exit 1, and argparse usage errors exit 2 — only 0 is unambiguous.
+
+`pass` means "no regression observed on this pair": a stable `fail -> fail` pair with lower cost passes.
 
 ### Anonymizer backend
 

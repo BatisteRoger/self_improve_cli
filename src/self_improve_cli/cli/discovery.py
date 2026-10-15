@@ -18,6 +18,7 @@ from self_improve_cli.cli.common import (
     _output,
     add_common_opts,
 )
+from self_improve_cli.domain import OutcomeSource, Trace, autofill_assessment
 from self_improve_cli.privacy import (
     AnonymizerBackend,
     anonymize_trace,
@@ -128,6 +129,33 @@ def _resolve_anonymizer(args: argparse.Namespace) -> AnonymizerBackend:
     return "auto"
 
 
+def _autofill_assessment(source: Any, store: Any, trace: Trace) -> str:
+    """Pre-fill assessment.json from the sanitized trace and recorded feedback.
+
+    Never touches a human assessment; otherwise fills empty fields only.
+    Returns a short status for the fetch output.
+    """
+    from datetime import UTC, datetime
+
+    existing = store.load_assessment(trace.trace_id)
+    if existing is not None and existing.outcome_source == OutcomeSource.HUMAN:
+        return "kept (source=human)"
+    try:
+        feedback = source.fetch_feedback(trace.trace_id)
+    except Exception as exc:  # noqa: BLE001 — feedback is optional; the trace is already saved
+        print(
+            f"Warning: feedback lookup failed ({type(exc).__name__}); outcome left unknown.",
+            file=sys.stderr,
+        )
+        feedback = None
+    updated = autofill_assessment(existing, trace, feedback)
+    if updated is None:
+        return "unchanged"
+    updated.assessed_at = datetime.now(UTC).isoformat()
+    store.save_assessment(updated)
+    return "created" if existing is None else "updated"
+
+
 def _cmd_fetch(args: argparse.Namespace) -> int:
     """Fetch a trace, anonymize it, and persist the sanitized version."""
     from self_improve_cli.sources.langsmith import LangSmithSource
@@ -182,6 +210,9 @@ def _cmd_fetch(args: argparse.Namespace) -> int:
 
     stats = write_ter(trace_id, trace.runs, store)
 
+    # Task comes from the sanitized trace — never from raw data.
+    assessment_status = _autofill_assessment(source, store, trace)
+
     result: dict[str, Any] = {
         "trace_id": trace_id,
         "runs": len(trace.runs),
@@ -192,6 +223,7 @@ def _cmd_fetch(args: argparse.Namespace) -> int:
         "sanitized_path": str(sanitized_path),
         "raw_saved": args.keep_raw,
         "ter_stats": stats,
+        "assessment": assessment_status,
     }
     if warning:
         result["warning"] = warning

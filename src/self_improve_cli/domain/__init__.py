@@ -11,9 +11,11 @@ provider payloads into this model at the boundary.
 
 from self_improve_cli.domain.records import (
     Assessment,
+    FeedbackScore,
     Finding,
     OutcomeSource,
     OutcomeStatus,
+    autofill_assessment,
 )
 from self_improve_cli.domain.trace import (
     SCHEMA_VERSION,
@@ -31,6 +33,7 @@ from self_improve_cli.domain.trace import (
 __all__ = [
     "SCHEMA_VERSION",
     "Assessment",
+    "FeedbackScore",
     "Finding",
     "Message",
     "OutcomeSource",
@@ -42,5 +45,6 @@ __all__ = [
     "RunType",
     "ToolCall",
     "Trace",
+    "autofill_assessment",
     "run_to_summary",
 ]

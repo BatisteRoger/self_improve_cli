@@ -18,6 +18,12 @@ EXIT_OK = 0
 EXIT_ERROR = 1
 EXIT_USAGE = 2
 
+# `gate` verdict exit codes (SLN-48). They overlap EXIT_ERROR / EXIT_USAGE by
+# design of the ticket: only 0 is unambiguous (pass).
+EXIT_GATE_PASS = 0
+EXIT_GATE_FAIL = 1
+EXIT_GATE_INCONCLUSIVE = 2
+
 
 def add_common_opts(p: argparse.ArgumentParser) -> None:
     """Options shared by most commands: --format and --data-dir."""

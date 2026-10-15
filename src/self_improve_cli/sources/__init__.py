@@ -10,7 +10,13 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any
 
-from self_improve_cli.domain import ProjectSummary, RunResolution, RunSummary, Trace
+from self_improve_cli.domain import (
+    FeedbackScore,
+    ProjectSummary,
+    RunResolution,
+    RunSummary,
+    Trace,
+)
 from self_improve_cli.domain import Run as Run
 
 
@@ -53,6 +59,14 @@ class TraceSource(ABC):
     def list_projects(self, limit: int = 50) -> list[ProjectSummary]:
         """List accessible projects, most recent first."""
         ...
+
+    def fetch_feedback(self, trace_id: str) -> list[FeedbackScore] | None:
+        """Return feedback scores recorded on the trace's root run.
+
+        None means "feedback not available from this source" — distinct from
+        an empty list, which means "no feedback recorded". Default: None.
+        """
+        return None
 
 
 def _content_text(content: Any) -> str:
