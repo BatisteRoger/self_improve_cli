@@ -76,6 +76,8 @@ class Side:
     groups: dict[str, list[RunOutcome]]
     conditions: dict[str, Any] = field(default_factory=dict)
     dataset_id: str | None = None
+    complete: bool | None = None  # None: not recorded (id files, older receipts)
+    failures: int | None = None
 
 
 def classify(runs: list[RunOutcome] | None) -> str:
@@ -167,11 +169,18 @@ def quality_criterion(
         "approximate": True,
     }
     mismatch = _policy_mismatch(baseline, candidate)
+    incomplete = [s.label for s in (baseline, candidate) if s.complete is False]
     if mismatch:
         status, code = Verdict.INCONCLUSIVE, ReasonCode.QUALITY_UNKNOWN
         reason = (
             f"Outcome policies differ ({mismatch}); flips are not comparable. "
             "Pass --outcome-key to gate to re-derive both sides under one policy."
+        )
+    elif incomplete:
+        status, code = Verdict.INCONCLUSIVE, ReasonCode.QUALITY_UNKNOWN
+        reason = (
+            f"Incomplete experiment fetch ({', '.join(incomplete)}): missing runs can fake "
+            "stability or flips. Re-run `self-improve fetch --experiment` to resume."
         )
     elif n == 0:
         status = Verdict.INCONCLUSIVE
@@ -364,7 +373,16 @@ def _side_summary(side: Side) -> dict[str, Any]:
         "runs": sum(sizes),
         "k": {"min": min(sizes), "max": max(sizes)},
         "outcome_policy": side.policy.to_dict() if side.policy else None,
+        "complete": side.complete,
+        "failures": side.failures,
     }
+
+
+def _completeness(side: dict[str, Any]) -> str:
+    if side["complete"] is None:
+        return "completeness unavailable"
+    failures = "unavailable" if side["failures"] is None else side["failures"]
+    return f"{'complete' if side['complete'] else 'INCOMPLETE'}, failures {failures}"
 
 
 def gate_sets_data(
@@ -425,8 +443,10 @@ def build_gate_sets(data: dict[str, Any]) -> str:
     lines = [
         head,
         "",
-        f"Baseline: {b['label']} ({b['examples']} examples, k={b['k']['min']}-{b['k']['max']})",
-        f"Candidate: {c['label']} ({c['examples']} examples, k={c['k']['min']}-{c['k']['max']})",
+        f"Baseline: {b['label']} ({b['examples']} examples, k={b['k']['min']}-{b['k']['max']}, "
+        f"{_completeness(b)})",
+        f"Candidate: {c['label']} ({c['examples']} examples, k={c['k']['min']}-{c['k']['max']}, "
+        f"{_completeness(c)})",
         f"Verdict reason: {data['reason']}",
         "",
         f"- Quality (APPROXIMATE): {q['status']}"

@@ -36,7 +36,9 @@ def _trace(trace_id: str, example_id: str | None = None, model: str = "m1") -> T
     return Trace(trace_id=trace_id, runs=[root, llm], sanitized=True, source="test")
 
 
-def _experiment(store: TraceStore, sid: str, patterns: dict[str, str], policy=None) -> None:
+def _experiment(
+    store: TraceStore, sid: str, patterns: dict[str, str], policy=None, **extra
+) -> None:
     examples = {}
     for ex, pattern in patterns.items():
         runs = []
@@ -55,6 +57,7 @@ def _experiment(store: TraceStore, sid: str, patterns: dict[str, str], policy=No
             "outcome_policy": policy,
             "conditions": {"git_commit": sid},
             "examples": examples,
+            **extra,
         }
     )
 
@@ -80,6 +83,52 @@ def test_gate_sets_fail_by_name_and_id(store, tmp_path, capsys):
     assert data["criteria"]["quality"]["regressions"] == 1
     facts = {f["name"]: f for f in data["criteria"]["conditions"]["facts"]}
     assert facts["models"]["state"] == "same" and facts["git_commit"]["state"] == "differs"
+    # receipts without completeness fields: unavailable, not a crash
+    assert data["baseline"]["complete"] is None and data["baseline"]["failures"] is None
+
+
+def test_gate_sets_incomplete_receipt_is_inconclusive(store, tmp_path, capsys):
+    policy = {"key": "k", "threshold": None, "source": "fetch"}
+    failure = {"run_id": "r9", "example_id": "a", "stage": "trace_fetch", "reason": "x"}
+    _experiment(store, "s-part", {"a": "PP", "b": "PPP", "c": "PPP"}, policy,
+                complete=False, failures=[failure])  # fmt: skip
+    assert _gate(tmp_path, "--baseline", "s-base", "--candidate", "s-part") == 2
+    data = json.loads(capsys.readouterr().out)
+    assert data["reason_code"] == "quality_unknown"
+    assert "Incomplete experiment fetch" in data["criteria"]["quality"]["reason"]
+    assert data["candidate"]["complete"] is False and data["candidate"]["failures"] == 1
+    main(["gate", "--baseline", "s-base", "--candidate", "s-part", "--data-dir", str(tmp_path)])
+    assert "INCOMPLETE, failures 1" in capsys.readouterr().out
+
+
+def test_gate_sets_id_file_duplicate_line_is_kept_once(store, tmp_path, capsys):
+    base = tmp_path / "base.txt"
+    base.write_text("a s-base-a-0\na s-base-a-0\n", encoding="utf-8")
+    cand = tmp_path / "cand.txt"
+    cand.write_text("a s-cand-a-0\na s-cand-a-1\n", encoding="utf-8")
+    argv = ["--baseline", f"@{base}", "--candidate", f"@{cand}", "--outcome-key", "k"]
+    assert _gate(tmp_path, *argv) == 2
+    data = json.loads(capsys.readouterr().out)
+    # without dedup the duplicate would fake k=2 and a stable_pass baseline
+    assert data["baseline"]["runs"] == 1
+    assert data["reason_code"] == "no_noise_estimate"
+
+
+def test_gate_sets_id_file_trace_under_two_examples(store, tmp_path, capsys):
+    ids = tmp_path / "ids.txt"
+    ids.write_text("a s-base-a-0\nb s-base-a-0\n", encoding="utf-8")
+    assert _gate(tmp_path, "--baseline", f"@{ids}", "--candidate", "s-cand") == 1
+    assert "ids.txt:2" in capsys.readouterr().err
+
+
+def test_gate_sets_outcome_key_without_feedback_file(store, tmp_path, capsys):
+    store.save_sanitized(_trace("single-1", "a"))
+    ids = tmp_path / "ids.txt"
+    ids.write_text("single-1\n", encoding="utf-8")
+    argv = ["--baseline", f"@{ids}", "--candidate", "s-cand", "--outcome-key", "k"]
+    assert _gate(tmp_path, *argv) == 1
+    err = capsys.readouterr().err
+    assert "feedback.json" in err and "fetch --experiment" in err
 
 
 def test_gate_sets_unknown_experiment(store, tmp_path, capsys):

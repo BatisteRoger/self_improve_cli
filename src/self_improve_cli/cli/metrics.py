@@ -154,29 +154,44 @@ def _root_run(trace: Any) -> Any:
     return next((r for r in trace.runs if r.parent_run_id is None), None)
 
 
-def _parse_id_file(path: str, store: Any) -> list[tuple[str, str]]:
-    """Read `trace_id` or `example_id trace_id` lines into (example_id, trace_id) pairs."""
+def _parse_id_file(path: str, load_trace: Any) -> list[tuple[str, str]]:
+    """Read `trace_id` or `example_id trace_id` lines into (example_id, trace_id) pairs.
+
+    A repeated identical pair is kept once (a duplicate line must not fake a
+    repetition); the same trace under two examples is contradictory -> error.
+    """
     pairs: list[tuple[str, str]] = []
+    seen: dict[str, str] = {}
     lines = Path(path).read_text(encoding="utf-8").splitlines()
     for lineno, line in enumerate(lines, 1):
         parts = line.split("#", 1)[0].split()
         if not parts:
             continue
         if len(parts) == 2:
-            pairs.append((parts[0], parts[1]))
-            continue
-        if len(parts) != 1:
+            example, trace_id = parts
+        elif len(parts) == 1:
+            trace_id = parts[0]
+            root = _root_run(load_trace(trace_id))
+            example = root.extra.get("reference_example_id") if root else None
+            if not example:
+                raise ValueError(
+                    f"{path}:{lineno}: trace {trace_id} has no reference_example_id. "
+                    "Write the line as `example_id trace_id`."
+                )
+            example = str(example)
+        else:
             raise ValueError(
                 f"{path}:{lineno}: expected `trace_id` or `example_id trace_id`, got {line!r}."
             )
-        root = _root_run(store.load_trace(parts[0]))
-        example = root.extra.get("reference_example_id") if root else None
-        if not example:
-            raise ValueError(
-                f"{path}:{lineno}: trace {parts[0]} has no reference_example_id. "
-                "Write the line as `example_id trace_id`."
-            )
-        pairs.append((str(example), parts[0]))
+        if trace_id in seen:
+            if seen[trace_id] != example:
+                raise ValueError(
+                    f"{path}:{lineno}: trace {trace_id} is listed under example {example} and "
+                    f"earlier under {seen[trace_id]}. A trace belongs to one example."
+                )
+            continue
+        seen[trace_id] = example
+        pairs.append((example, trace_id))
     if not pairs:
         raise ValueError(f"{path}: no trace IDs found.")
     return pairs
@@ -191,15 +206,30 @@ def _load_side(arg: str, label: str, store: Any, override: Any) -> Any:
     binary = {OutcomeStatus.SUCCESS.value: "pass", OutcomeStatus.FAIL.value: "fail"}
 
     def _from_feedback(trace_id: str) -> str:
-        status = outcome_from_policy(store.load_feedback(trace_id), override)[0]
+        feedback = store.load_feedback(trace_id)
+        if feedback is None:
+            raise ValueError(
+                f"Trace {trace_id} has no stored feedback.json, so --outcome-key cannot "
+                "re-derive its outcome. feedback.json is only written by "
+                "`self-improve fetch --experiment <name>`; re-fetch the experiment that ran "
+                "this trace (stored traces are skipped, feedback is refreshed), or drop "
+                "--outcome-key to use `assess` outcomes."
+            )
+        status = outcome_from_policy(feedback, override)[0]
         return binary.get(status.value, "unknown")
 
     groups: dict[str, list[Any]] = {}
     models: set[str] = set()
     starts: list[str] = []
+    traces: dict[str, Any] = {}
+
+    def _load(trace_id: str) -> Any:
+        if trace_id not in traces:
+            traces[trace_id] = store.load_trace(trace_id)
+        return traces[trace_id]
 
     def _add(example_id: str, trace_id: str, outcome: str) -> None:
-        trace = store.load_trace(trace_id)
+        trace = _load(trace_id)
         models.update(_models(trace))
         root = _root_run(trace)
         if root is not None and root.start_time:
@@ -209,7 +239,7 @@ def _load_side(arg: str, label: str, store: Any, override: Any) -> Any:
         )
 
     if arg.startswith("@"):
-        for example_id, trace_id in _parse_id_file(arg[1:], store):
+        for example_id, trace_id in _parse_id_file(arg[1:], _load):
             if override is not None:
                 outcome = _from_feedback(trace_id)
             else:
@@ -241,6 +271,8 @@ def _load_side(arg: str, label: str, store: Any, override: Any) -> Any:
             _add(example_id, run["trace_id"], outcome)
     policy = override or OutcomePolicy.from_dict(receipt.get("outcome_policy"))
     conditions = {**(receipt.get("conditions") or {}), "models": sorted(models) or None}
+    complete = receipt.get("complete")
+    failures = receipt.get("failures")
     return Side(
         receipt.get("experiment_name") or label,
         "experiment",
@@ -249,6 +281,8 @@ def _load_side(arg: str, label: str, store: Any, override: Any) -> Any:
         groups,
         conditions,
         receipt.get("dataset_id"),
+        complete=complete if isinstance(complete, bool) else None,
+        failures=len(failures) if isinstance(failures, list) else None,
     )
 
 
