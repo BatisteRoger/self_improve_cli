@@ -235,7 +235,7 @@ class _FakeSource:
         self.project_name = project_name
 
     def fetch_experiment(self, name):
-        fb = [FeedbackScore(key="k", score=0.9)]
+        fb = [FeedbackScore(key="k", score=0.9, n=2)]
         runs = [
             ExperimentRunRef("r1", "t1", "ex1", "success", fb),
             ExperimentRunRef("r2", "t2", "ex1", "success", []),
@@ -269,6 +269,9 @@ def test_fetch_experiment_cli(tmp_path, capsys, monkeypatch):
     assert receipt["outcome_policy"] == {"key": "k", "threshold": 0.5, "source": "fetch"}
     assessment = store.load_assessment("t1")
     assert assessment is not None and assessment.outcome.value == "success"
+    assert "mean of 2 points" in assessment.notes
+    feedback = json.loads((tmp_path / "traces" / "t1" / "feedback.json").read_text("utf-8"))
+    assert feedback[0]["n"] == 2 and "mean of 2 feedback points" in feedback[0]["note"]
     # resume: stored traces are skipped
     assert main(argv) == 1
     assert json.loads(capsys.readouterr().out)["traces"]["skipped"] == 2

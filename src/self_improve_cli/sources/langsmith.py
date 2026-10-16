@@ -339,12 +339,14 @@ def _experiment_conditions(session: Any) -> dict[str, Any]:
 
 
 def _feedback_stats_to_scores(stats: Any) -> list[FeedbackScore]:
-    """Key + mean numeric score per key; comments are dropped here."""
+    """Key + mean numeric score + point count per key; comments are dropped here."""
     out: list[FeedbackScore] = []
     for key, st in (stats or {}).items():
         avg = st.get("avg") if isinstance(st, dict) else getattr(st, "avg", None)
+        n = st.get("n") if isinstance(st, dict) else getattr(st, "n", None)
         num = float(avg) if isinstance(avg, (int, float)) else None
-        out.append(FeedbackScore(key=str(key), score=num))
+        count = n if isinstance(n, int) and not isinstance(n, bool) else None
+        out.append(FeedbackScore(key=str(key), score=num, n=count))
     return out
 
 

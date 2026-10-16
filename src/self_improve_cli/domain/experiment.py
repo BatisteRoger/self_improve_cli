@@ -72,13 +72,16 @@ def outcome_from_policy(
     """
     if policy is None or policy.key is None:
         return OutcomeStatus.UNKNOWN, "No outcome policy declared; outcome left unknown."
-    score = next((f.score for f in feedback or [] if f.key == policy.key), None)
-    if score is None:
+    entry = next((f for f in feedback or [] if f.key == policy.key), None)
+    score = entry.score if entry else None
+    if entry is None or score is None:
         return (
             OutcomeStatus.UNKNOWN,
             f"Feedback key '{policy.key}' not recorded with a numeric score; outcome unknown.",
         )
     rule = f"policy {policy.describe()}, {policy.key}={score:g}"
+    if (entry.n or 0) > 1:
+        rule += f" (mean of {entry.n} points)"
     if policy.threshold is not None:
         status = OutcomeStatus.SUCCESS if score >= policy.threshold else OutcomeStatus.FAIL
         return status, f"Outcome from {rule}."

@@ -62,6 +62,7 @@ class FeedbackScore:
 
     key: str
     score: float | None = None
+    n: int | None = None  # feedback points averaged into `score`, when the source says
 
 
 # -- Assessment auto-fill (on fetch) ------------------------------------------

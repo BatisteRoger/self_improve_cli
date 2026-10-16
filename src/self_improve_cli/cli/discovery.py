@@ -202,7 +202,13 @@ def _cmd_fetch_experiment(args: argparse.Namespace) -> int:
             store.save_sanitized(trace)
             write_ter(ref.trace_id, trace.runs, store)
             counts["stored"] += 1
-        store.save_feedback(ref.trace_id, ref.feedback)
+        notes = {
+            f.key: f"score is the mean of {f.n} feedback points, thresholded under "
+            f"{policy.describe()}"
+            for f in ref.feedback
+            if policy and policy.threshold is not None and f.key == policy.key and (f.n or 0) > 1
+        }
+        store.save_feedback(ref.trace_id, ref.feedback, notes)
         existing = store.load_assessment(ref.trace_id)
         updated = autofill_assessment(existing, trace, ref.feedback, policy=policy)
         if updated is not None:

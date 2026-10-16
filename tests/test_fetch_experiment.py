@@ -63,6 +63,15 @@ def test_fetch_experiment_groups_dedups_and_drops_content(monkeypatch):
     assert listing.complete
 
 
+def test_fetch_experiment_keeps_point_count(monkeypatch):
+    monkeypatch.delenv("LANGSMITH_ALLOWED_PROJECTS", raising=False)
+    run = NS(id="r1", trace_id="r1", status="success", feedback_stats={"k": {"avg": 0.6, "n": 3}})
+    items = [NS(id="ex-1", runs=[run])]
+    src = LangSmithSource(project_name="p", client=_client(_session(), items))
+    fb = src.fetch_experiment("exp").runs[0].feedback[0]
+    assert (fb.score, fb.n) == (0.6, 3)
+
+
 def test_fetch_experiment_requires_dataset_and_allowlist(monkeypatch):
     monkeypatch.delenv("LANGSMITH_ALLOWED_PROJECTS", raising=False)
     src = LangSmithSource(project_name="p", client=_client(_session(dataset=None), []))

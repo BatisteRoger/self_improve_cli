@@ -64,12 +64,23 @@ class RecordsMixin(StoreBase):
 
     # -- Feedback --------------------------------------------------------
 
-    def save_feedback(self, trace_id: str, scores: list[FeedbackScore]) -> Path:
-        """Persist feedback key + numeric score (no comments) alongside the trace."""
+    def save_feedback(
+        self, trace_id: str, scores: list[FeedbackScore], notes: dict[str, str] | None = None
+    ) -> Path:
+        """Persist feedback key + numeric score + point count (no comments) alongside the trace.
+
+        `notes` maps a key to a short CLI-authored note (never source text).
+        """
         trace_dir = self._trace_dir(trace_id)
         trace_dir.mkdir(parents=True, exist_ok=True)
         path = trace_dir / "feedback.json"
-        write_json(path, [{"key": f.key, "score": f.score} for f in scores])
+        entries = []
+        for f in scores:
+            entry: dict[str, object] = {"key": f.key, "score": f.score, "n": f.n}
+            if notes and f.key in notes:
+                entry["note"] = notes[f.key]
+            entries.append(entry)
+        write_json(path, entries)
         return path
 
     def load_feedback(self, trace_id: str) -> list[FeedbackScore] | None:
@@ -78,7 +89,7 @@ class RecordsMixin(StoreBase):
         if not path.exists():
             return None
         data = json.loads(path.read_text(encoding="utf-8"))
-        return [FeedbackScore(key=d["key"], score=d.get("score")) for d in data]
+        return [FeedbackScore(key=d["key"], score=d.get("score"), n=d.get("n")) for d in data]
 
     # -- Findings --------------------------------------------------------
 
