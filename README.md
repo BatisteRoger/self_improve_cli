@@ -141,6 +141,7 @@ every command with `uv run` — do **not** call the
 self-improve init              # Create .env from template (LangSmith API key)
 self-improve list --limit 10   # L0: discover recent traces
 self-improve fetch <trace_id>  # Download, anonymize, build all representations
+self-improve fetch --experiment <name> --outcome-key "<key>>=0.5"  # Every run of an experiment
 self-improve skeleton <trace_id>          # L1: structure and metrics
 self-improve narrative <trace_id>         # L2: read the trace story
 self-improve run-detail <trace_id> <run_id>  # L3: full content of one run
@@ -156,7 +157,7 @@ self-improve run-detail <trace_id> <run_id>  # L3: full content of one run
 | L3 | `run-detail`, `context-at` | Full untruncated content of one run or one step |
 | Nav | `target-timeline`, `error-neighborhood` | Every touch on a target; steps around each error |
 | — | `compare` | Diff two traces (tokens, latency, skills) |
-| — | `gate` | Before/after verdict: pass / fail / inconclusive (exit 0/1/2) |
+| — | `gate` | Before/after verdict: pass / fail / inconclusive (exit 0/1/2); `--baseline/--candidate` compares repeated-run experiment sets (per-example flips above a noise floor) |
 | — | `skill-check` | Verify expected skill trigger (exit 0/1) |
 | — | `assess` | Attach task & outcome assessment to a trace |
 | — | `finding` | Persist analyst findings (add/list/remove/clear) |

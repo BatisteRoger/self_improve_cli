@@ -77,10 +77,10 @@ looking at the entire trace in context.
 
 Dependency direction: `source -> canonical model -> privacy/storage -> deterministic analysis -> CLI`. No reverse dependency from the core to any specific provider.
 
-- `domain/` — canonical trace, run, message, and artifact types; schema versioning and validation. `trace.py` (model), `records.py` (analyst assessments + findings).
+- `domain/` — canonical trace, run, message, and artifact types; schema versioning and validation. `trace.py` (model), `records.py` (analyst assessments + findings), `experiment.py` (outcome policy + experiment listing).
 - `sources/` — a `TraceSource` protocol plus the initial LangSmith adapter. SDK-specific objects stop at this boundary.
 - `privacy/` — anonymization policy, recognizers, placeholder mapping, and sanitization reports. Internally split into `patterns` (regex), `presidio_adapter` (NLP), `placeholders` (stable mapping), `report` (summary), and `redact` (recursive application + backend merge).
-- `storage/` — safe local artifact layout, atomic writes, metadata, and raw-retention controls. `base.py` (paths + serialization) plus per-area mixins: `traces`, `records`, `ter`, `prompts`, `ati`; `TraceStore` composes them.
+- `storage/` — safe local artifact layout, atomic writes, metadata, and raw-retention controls. `base.py` (paths + serialization) plus per-area mixins: `traces`, `records`, `experiments`, `ter`, `prompts`, `ati`; `TraceStore` composes them.
 - `representations/` — deterministic L0/L1/L2/L3 TER builders over canonical sanitized data. One module per view (`skeleton`, `narrative`, `run_detail`, `context_at`, `navigation`, `trace_diff`, `tools`) over `common` helpers; `ter.py` writes all derived files. Public names re-exported from `__init__.py`.
 - `metrics/` — tool, context, and skill metrics, each labeled with its approximation and assumptions.
 - `cli/` — command parsing, stable exit codes, stdout/stderr rules, Markdown/JSON output, and agent-oriented help. `main.py` is a thin entry point; handlers and parser registration live per command family in `common` (shared plumbing), `discovery`, `views`, `metrics`, `records`, `prompts`, `ati`, `system`. Each module exposes `register(sub)`.
@@ -143,7 +143,8 @@ governs both.
 | `skill-metrics` | ✓ | ✓ | step indices | ✓ approximate labels | n/a | ✓ structured |
 | `tools` | ✓ | ✓ `--detail` | tool names | ✓ | n/a | markdown-wrapped (tabular) |
 | `compare` | ✓ | ✓ | trace IDs | ✓ | n/a | ✓ structured |
-| `gate` | ✓ before/after order | ✓ verdict + per-axis reasons | `diff`/`compare`/`assess` next commands | ✓ missing/unknown outcome = inconclusive; efficiency labeled approximate | ✓ same ID, unknown trace | ✓ structured; exit 0/1/2 mirrors verdict |
+| `gate` | ✓ before/after order | ✓ verdict + per-axis reasons | `diff`/`compare`/`assess` next commands | ✓ missing/unknown outcome = inconclusive; efficiency labeled approximate | ✓ same ID, unknown trace | ✓ structured; exit 0/1/2 mirrors verdict; `reason_code` |
+| `gate --baseline/--candidate` | ✓ baseline/candidate order, same side forms | ✓ 3x3 table, flagged examples capped at 10 in Markdown, full list in JSON | example IDs + trace pointers with `diff`/`narrative` next commands | ✓ noise floor and efficiency labeled approximate; unknown/k=1 never judged; conditions `unavailable` stated | ✓ unknown experiment suggests `fetch --experiment`, id-file line errors, usage errors | ✓ structured; `reason_code` |
 | `skill-check` | ✓ | ✓ | n/a | ✓ | ✓ suggests skill-metrics | ✓ structured |
 | `assess` | ✓ | ✓ | n/a | ✓ | ✓ suggests `--task` | JSON in both formats |
 | `finding` | ✓ subcommands like `ati`/`prompt` | ✓ compact list, JSON for full | finding IDs, run IDs in evidence | ✓ free-string pattern/locus documented | ✓ suggests `finding list` | ✓ structured |
@@ -293,6 +294,27 @@ can cite them stably. `info` reports the findings count and IDs.
 - **Exit code mirrors the verdict**: 0 pass, 1 fail, 2 inconclusive. Errors (unknown trace, same ID twice) also exit 1, and argparse usage errors exit 2 — only 0 is unambiguous.
 
 `pass` means "no regression observed on this pair": a stable `fail -> fail` pair with lower cost passes.
+
+The JSON receipt carries `mode: "pair"` and a `reason_code` on inconclusive verdicts (`quality_unknown`, `efficiency_tradeoff`).
+
+### Experiment-set gate
+
+One pair of stochastic runs can only be inconclusive honestly. `gate --baseline <exp|@file> --candidate <exp|@file>` compares two sets of repeated runs over the same dataset examples (`metrics/gate_sets.py`). It is offline: experiments must be fetched first.
+
+```bash
+self-improve fetch --experiment "<baseline experiment>" --outcome-key "correctness>=0.5"
+self-improve fetch --experiment "<candidate experiment>" --outcome-key "correctness>=0.5"
+self-improve gate --baseline "<baseline experiment>" --candidate "<candidate experiment>"
+```
+
+- **`fetch --experiment <name>`** lists the session's runs grouped by dataset example, stores each trace through the normal anonymize + TER pipeline, writes `feedback.json` (key + numeric score only) per trace, and writes `data/experiments/<session_id>/experiment.json` (example -> runs, outcome policy, run conditions, failures). Example inputs/outputs and feedback comments are dropped at the adapter. `LANGSMITH_ALLOWED_PROJECTS` applies to the experiment name; `LANGSMITH_PROJECT` plays no role. A run whose trace cannot be fetched is listed under `failures`; the command exits 1 with `complete: false`, and re-running it resumes (stored traces are skipped).
+- **`--outcome-key KEY` or `"KEY>=T"`** declares which feedback key decides pass/fail. `KEY` needs a binary 0/1 score; `KEY>=T` thresholds a continuous score. A missing key or score leaves the run `unknown`. Without `--outcome-key` every experiment run is `unknown`.
+- **Sides**: a stored experiment (name or session ID), or `@file` with one `trace_id` or `example_id trace_id` per line (the example comes from the root run's `reference_example_id` otherwise). `@file` outcomes come from `assess` (`partial` counts as unknown). `gate --outcome-key` re-derives both sides from `feedback.json` under one policy.
+- **Classification** per example and side: `stable_pass` / `stable_fail` / `unstable` over its k runs; any unknown run -> unknown; k = 1 -> `no_noise_estimate` (never a pairwise fallback). Regression = `stable_pass -> stable_fail`, gain = the reverse; the full 3x3 table is reported.
+- **Quality rule**: noise floor = share of `unstable` examples in the baseline. Regressions / comparable examples > floor -> `fail`; no regression -> `pass`; otherwise `inconclusive` (`within_noise`). Gains are reported and never offset regressions. Different outcome policies on the two sides -> `quality_unknown`.
+- **Efficiency** (approximate): per example, the candidate median against the baseline min-max range for tokens, latency, and tool calls; a metric with more examples up than down is degraded -> `efficiency_tradeoff`. Missing tokens are unavailable, never 0.
+- **Conditions** are facts (model ids from `ls_model_name`, git commit, dataset version, outcome policy, wall-clock gap): `same` / `differs` / `unavailable`. `--strict-conditions` turns any `differs` into `conditions_differ`.
+- **Verdict** is conjunctive: any criterion fails -> `fail` (exit 1); else any inconclusive -> `inconclusive` (exit 2) with the first `reason_code` of `quality_unknown`, `no_noise_estimate`, `within_noise`, `conditions_differ`, `efficiency_tradeoff`; else `pass` (exit 0). Up to 3 representative regressions are given as trace pointers with `diff` / `narrative --budget` next commands.
 
 ### Anonymizer backend
 

@@ -6,6 +6,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
+from pathlib import Path
+from typing import Any
 
 from self_improve_cli.cli.common import (
     EXIT_ERROR,
@@ -13,6 +16,7 @@ from self_improve_cli.cli.common import (
     EXIT_GATE_INCONCLUSIVE,
     EXIT_GATE_PASS,
     EXIT_OK,
+    EXIT_USAGE,
     _get_store,
     _output,
     add_common_opts,
@@ -126,24 +130,185 @@ def _cmd_compare(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+_GATE_EXIT = {
+    "pass": EXIT_GATE_PASS,
+    "fail": EXIT_GATE_FAIL,
+    "inconclusive": EXIT_GATE_INCONCLUSIVE,
+}
+
+
+def _models(trace: Any) -> set[str]:
+    """Model ids from the LangChain `ls_model_name` run metadata (LLM runs)."""
+    found: set[str] = set()
+    for run in trace.runs:
+        if run.run_type.value != "llm":
+            continue
+        meta = run.extra.get("metadata") or (run.extra.get("extra") or {}).get("metadata") or {}
+        name = meta.get("ls_model_name") if isinstance(meta, dict) else None
+        if name:
+            found.add(str(name))
+    return found
+
+
+def _root_run(trace: Any) -> Any:
+    return next((r for r in trace.runs if r.parent_run_id is None), None)
+
+
+def _parse_id_file(path: str, store: Any) -> list[tuple[str, str]]:
+    """Read `trace_id` or `example_id trace_id` lines into (example_id, trace_id) pairs."""
+    pairs: list[tuple[str, str]] = []
+    lines = Path(path).read_text(encoding="utf-8").splitlines()
+    for lineno, line in enumerate(lines, 1):
+        parts = line.split("#", 1)[0].split()
+        if not parts:
+            continue
+        if len(parts) == 2:
+            pairs.append((parts[0], parts[1]))
+            continue
+        if len(parts) != 1:
+            raise ValueError(
+                f"{path}:{lineno}: expected `trace_id` or `example_id trace_id`, got {line!r}."
+            )
+        root = _root_run(store.load_trace(parts[0]))
+        example = root.extra.get("reference_example_id") if root else None
+        if not example:
+            raise ValueError(
+                f"{path}:{lineno}: trace {parts[0]} has no reference_example_id. "
+                "Write the line as `example_id trace_id`."
+            )
+        pairs.append((str(example), parts[0]))
+    if not pairs:
+        raise ValueError(f"{path}: no trace IDs found.")
+    return pairs
+
+
+def _load_side(arg: str, label: str, store: Any, override: Any) -> Any:
+    """Resolve `@file` or an experiment name/session ID to a gate `Side` (offline)."""
+    from self_improve_cli.domain import OutcomePolicy, OutcomeStatus, outcome_from_policy
+    from self_improve_cli.metrics.efficiency import efficiency_summary
+    from self_improve_cli.metrics.gate_sets import RunOutcome, Side
+
+    binary = {OutcomeStatus.SUCCESS.value: "pass", OutcomeStatus.FAIL.value: "fail"}
+
+    def _from_feedback(trace_id: str) -> str:
+        status = outcome_from_policy(store.load_feedback(trace_id), override)[0]
+        return binary.get(status.value, "unknown")
+
+    groups: dict[str, list[Any]] = {}
+    models: set[str] = set()
+    starts: list[str] = []
+
+    def _add(example_id: str, trace_id: str, outcome: str) -> None:
+        trace = store.load_trace(trace_id)
+        models.update(_models(trace))
+        root = _root_run(trace)
+        if root is not None and root.start_time:
+            starts.append(root.start_time)
+        groups.setdefault(example_id, []).append(
+            RunOutcome(trace_id, outcome, efficiency_summary(trace.runs))
+        )
+
+    if arg.startswith("@"):
+        for example_id, trace_id in _parse_id_file(arg[1:], store):
+            if override is not None:
+                outcome = _from_feedback(trace_id)
+            else:
+                assessment = store.load_assessment(trace_id)
+                outcome = (
+                    binary.get(assessment.outcome.value, "unknown") if assessment else "unknown"
+                )
+            _add(example_id, trace_id, outcome)
+        policy = override or OutcomePolicy(None, None, "assessment")
+        conditions: dict[str, Any] = {
+            "start_time": min(starts) if starts else None,
+            "end_time": max(starts) if starts else None,
+            "models": sorted(models) or None,
+        }
+        return Side(label, "file", arg[1:], policy, groups, conditions, None)
+
+    receipt = store.find_experiment(arg)
+    if receipt is None:
+        raise ValueError(
+            f"No stored experiment named or with session ID '{arg}'. "
+            f"Fetch it first: `self-improve fetch --experiment '{arg}'`, or pass `@file`."
+        )
+    for example_id, runs in receipt.get("examples", {}).items():
+        for run in runs:
+            if override is not None:
+                outcome = _from_feedback(run["trace_id"])
+            else:
+                outcome = binary.get(run.get("outcome", "unknown"), "unknown")
+            _add(example_id, run["trace_id"], outcome)
+    policy = override or OutcomePolicy.from_dict(receipt.get("outcome_policy"))
+    conditions = {**(receipt.get("conditions") or {}), "models": sorted(models) or None}
+    return Side(
+        receipt.get("experiment_name") or label,
+        "experiment",
+        receipt["session_id"],
+        policy,
+        groups,
+        conditions,
+        receipt.get("dataset_id"),
+    )
+
+
+def _cmd_gate_sets(args: argparse.Namespace) -> int:
+    """Experiment-set verdict: per-example flips above the baseline noise floor."""
+    from self_improve_cli.domain import parse_outcome_key
+    from self_improve_cli.metrics.gate_sets import build_gate_sets, gate_sets_data
+
+    override = parse_outcome_key(args.outcome_key, source="gate") if args.outcome_key else None
+    store = _get_store(args)
+    baseline = _load_side(args.baseline, "baseline", store, override)
+    candidate = _load_side(args.candidate, "candidate", store, override)
+    if baseline.kind == candidate.kind and baseline.ref == candidate.ref:
+        raise ValueError("--baseline and --candidate resolve to the same set.")
+    if baseline.dataset_id and candidate.dataset_id and baseline.dataset_id != candidate.dataset_id:
+        raise ValueError(
+            f"Experiments use different datasets ({baseline.dataset_id} vs "
+            f"{candidate.dataset_id}); examples cannot be paired."
+        )
+    data = gate_sets_data(baseline, candidate, strict_conditions=args.strict_conditions)
+    _output(data if args.format == "json" else build_gate_sets(data), args)
+    return _GATE_EXIT[data["verdict"]]
+
+
 def _cmd_gate(args: argparse.Namespace) -> int:
     """Before/after verdict receipt: pass / fail / inconclusive, exit 0 / 1 / 2."""
     from self_improve_cli.metrics.efficiency import efficiency_summary
     from self_improve_cli.metrics.gate import Verdict, build_gate, gate_data
 
-    if args.trace_before == args.trace_after:
+    sets_mode = args.baseline is not None or args.candidate is not None
+    pair_mode = args.trace_before is not None or args.trace_after is not None
+    usage = None
+    if sets_mode and pair_mode:
+        usage = "use either `gate <before> <after>` or `gate --baseline X --candidate Y`."
+    elif sets_mode and (args.baseline is None or args.candidate is None):
+        usage = "--baseline and --candidate must be given together."
+    elif not sets_mode and (args.trace_before is None or args.trace_after is None):
+        usage = "pass two trace IDs, or --baseline <exp|@file> --candidate <exp|@file>."
+    elif not sets_mode and (args.outcome_key or args.strict_conditions):
+        usage = "--outcome-key and --strict-conditions apply to --baseline/--candidate only."
+    if usage:
+        print(f"Error: {usage}", file=sys.stderr)
+        return EXIT_USAGE
+    if sets_mode:
+        return _cmd_gate_sets(args)
+
+    before_id, after_id = str(args.trace_before), str(args.trace_after)
+    if before_id == after_id:
         raise ValueError(
-            f"trace_before and trace_after are the same ({args.trace_before}). "
+            f"trace_before and trace_after are the same ({before_id}). "
             "Pass the trace recorded before the change, then the one after."
         )
     store = _get_store(args)
-    before = store.load_trace(args.trace_before)
-    after = store.load_trace(args.trace_after)
+    before = store.load_trace(before_id)
+    after = store.load_trace(after_id)
     data = gate_data(
-        args.trace_before,
-        args.trace_after,
-        store.load_assessment(args.trace_before),
-        store.load_assessment(args.trace_after),
+        before_id,
+        after_id,
+        store.load_assessment(before_id),
+        store.load_assessment(after_id),
         efficiency_summary(before.runs),
         efficiency_summary(after.runs),
     )
@@ -230,8 +395,25 @@ def register(sub: argparse._SubParsersAction) -> None:
         "gate",
         help="Verification: before/after verdict (exit 0=pass, 1=fail, 2=inconclusive)",
     )
-    p.add_argument("trace_before")
-    p.add_argument("trace_after")
+    p.add_argument("trace_before", nargs="?", default=None)
+    p.add_argument("trace_after", nargs="?", default=None)
+    p.add_argument(
+        "--baseline",
+        default=None,
+        help="Experiment set mode: stored experiment name/session ID, or @file of trace IDs",
+    )
+    p.add_argument("--candidate", default=None, help="Same forms as --baseline")
+    p.add_argument(
+        "--outcome-key",
+        default=None,
+        help="Set mode: re-derive both sides' outcomes from stored feedback ('KEY' or 'KEY>=T')",
+    )
+    p.add_argument(
+        "--strict-conditions",
+        action="store_true",
+        help="Set mode: differing conditions (model, commit, dataset version, policy) "
+        "make the verdict inconclusive (conditions_differ)",
+    )
     add_common_opts(p)
     p.set_defaults(func=_cmd_gate)
 
