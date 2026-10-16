@@ -13,12 +13,16 @@ examples, each example repeated k times per side.
   with k >= 2 and no unknown run). APPROXIMATE: with small k an unstable
   example can show k identical outcomes by chance, so the floor
   underestimates true instability. Not a significance test.
-- **Quality rule**: no comparable example -> inconclusive; regressions /
-  comparable > floor -> fail; no regression -> pass; else inconclusive
-  `within_noise`. Gains are reported but never offset regressions.
-- **Efficiency** (APPROXIMATE): per example, the candidate median is compared
-  with the baseline min-max range; a metric is degraded when more examples
-  went up than down. Missing values are unavailable, never 0.
+- **Quality rule**, first match: two outcome rules (key vs key, or feedback
+  vs `assess`) or an incomplete experiment fetch -> `quality_unknown`; no
+  comparable example -> inconclusive; regressions / comparable > floor ->
+  fail; an example with no run on one side -> `insufficient_coverage`;
+  stable -> unstable moves / comparable > floor -> `destabilized`; no
+  regression -> pass; else `within_noise`. Gains never offset regressions.
+- **Efficiency** (APPROXIMATE): per comparable example, the candidate median
+  is compared with the baseline min-max range; a metric is degraded when
+  more examples went up than down. Missing values are unavailable, never 0;
+  a metric measured nowhere is `unavailable`, not equal.
 - **Verdict** is conjunctive per criterion: any fail -> fail; else any
   inconclusive -> inconclusive with the highest-priority reason code; else
   pass.
@@ -53,7 +57,10 @@ MAX_MARKDOWN_ROWS = 10
 SETS_RULE = (
     "per example: stable_pass / stable_fail / unstable over k runs (unknown run -> unknown, "
     "k=1 -> no_noise_estimate); noise floor = baseline unstable share; "
-    "regressions/comparable > floor -> fail; 0 regressions -> pass; else within_noise; "
+    "policy mismatch or incomplete fetch -> quality_unknown; "
+    "regressions/comparable > floor -> fail; example missing on a side -> "
+    "insufficient_coverage; destabilized/comparable > floor -> destabilized; "
+    "0 regressions -> pass; else within_noise; human assessments override feedback; "
     "conjunctive over quality, efficiency (and conditions with --strict-conditions)"
 )
 
