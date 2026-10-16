@@ -52,6 +52,16 @@ class Verdict(StrEnum):
     INCONCLUSIVE = "inconclusive"
 
 
+class ReasonCode(StrEnum):
+    """Machine-readable cause of an inconclusive verdict (shared by v1 and v2)."""
+
+    QUALITY_UNKNOWN = "quality_unknown"
+    NO_NOISE_ESTIMATE = "no_noise_estimate"
+    WITHIN_NOISE = "within_noise"
+    CONDITIONS_DIFFER = "conditions_differ"
+    EFFICIENCY_TRADEOFF = "efficiency_tradeoff"
+
+
 class QualityStatus(StrEnum):
     IMPROVED = "improved"
     STABLE = "stable"
@@ -147,20 +157,29 @@ def efficiency_axis(metrics: dict[str, dict[str, Any]]) -> AxisResult:
     return AxisResult(status, reasons)
 
 
-def decide_verdict(quality: str, efficiency: str) -> tuple[Verdict, str]:
-    """Apply the verdict rule (see module docstring). Returns (verdict, reason)."""
+def decide_verdict(quality: str, efficiency: str) -> tuple[Verdict, str, ReasonCode | None]:
+    """Apply the verdict rule (see module docstring).
+
+    Returns (verdict, reason, reason_code); reason_code is set only when the
+    verdict is inconclusive.
+    """
     if quality == QualityStatus.REGRESSED:
-        return Verdict.FAIL, "Quality regressed."
+        return Verdict.FAIL, "Quality regressed.", None
     if quality == QualityStatus.UNKNOWN:
-        return Verdict.INCONCLUSIVE, "Quality unknown on at least one side; no guess."
+        return (
+            Verdict.INCONCLUSIVE,
+            "Quality unknown on at least one side; no guess.",
+            ReasonCode.QUALITY_UNKNOWN,
+        )
     if quality == QualityStatus.IMPROVED:
-        return Verdict.PASS, "Quality improved; efficiency changes are listed for review."
+        return Verdict.PASS, "Quality improved; efficiency changes are listed for review.", None
     if efficiency == EfficiencyStatus.DEGRADED:
         return (
             Verdict.INCONCLUSIVE,
             "Quality stable but efficiency degraded; a cost increase may be deliberate.",
+            ReasonCode.EFFICIENCY_TRADEOFF,
         )
-    return Verdict.PASS, "Quality stable and efficiency improved or equal."
+    return Verdict.PASS, "Quality stable and efficiency improved or equal.", None
 
 
 def _assessment_summary(a: Assessment | None) -> dict[str, str] | None:
@@ -185,11 +204,13 @@ def gate_data(
     quality = quality_axis(assessment_before, assessment_after)
     metrics = efficiency_metrics(efficiency_before, efficiency_after)
     efficiency = efficiency_axis(metrics)
-    verdict, reason = decide_verdict(quality.status, efficiency.status)
+    verdict, reason, reason_code = decide_verdict(quality.status, efficiency.status)
     return {
+        "mode": "pair",
         "trace_before": trace_before,
         "trace_after": trace_after,
         "verdict": verdict.value,
+        "reason_code": reason_code.value if reason_code else None,
         "reason": reason,
         "rule": VERDICT_RULE,
         "quality": {
@@ -217,7 +238,8 @@ def build_gate(data: dict[str, Any]) -> str:
     """Render the gate receipt as compact Markdown."""
     q, e = data["quality"], data["efficiency"]
     lines = [
-        f"# Gate: {data['verdict'].upper()}",
+        f"# Gate: {data['verdict'].upper()}"
+        + (f" ({data['reason_code']})" if data.get("reason_code") else ""),
         "",
         f"Before: {data['trace_before']}  After: {data['trace_after']}",
         f"Verdict reason: {data['reason']}",
