@@ -39,7 +39,9 @@ from self_improve_cli.metrics.gate import ReasonCode, Verdict
 CLASSES = ("stable_pass", "unstable", "stable_fail")
 REASON_PRIORITY = [
     ReasonCode.QUALITY_UNKNOWN,
+    ReasonCode.INSUFFICIENT_COVERAGE,
     ReasonCode.NO_NOISE_ESTIMATE,
+    ReasonCode.DESTABILIZED,
     ReasonCode.WITHIN_NOISE,
     ReasonCode.CONDITIONS_DIFFER,
     ReasonCode.EFFICIENCY_TRADEOFF,
@@ -110,7 +112,9 @@ def example_rows(baseline: Side, candidate: Side) -> list[dict[str, Any]]:
     for ex in sorted(set(baseline.groups) | set(candidate.groups)):
         b, c = classify(baseline.groups.get(ex)), classify(candidate.groups.get(ex))
         row: dict[str, Any] = {"example_id": ex, "baseline": b, "candidate": c}
-        if "missing" in (b, c) or "unknown" in (b, c):
+        if "missing" in (b, c):
+            row["reason_code"] = ReasonCode.INSUFFICIENT_COVERAGE.value
+        elif "unknown" in (b, c):
             row["reason_code"] = ReasonCode.QUALITY_UNKNOWN.value
         elif "single" in (b, c):
             row["reason_code"] = ReasonCode.NO_NOISE_ESTIMATE.value
@@ -134,8 +138,12 @@ def noise_floor(side: Side) -> tuple[float | None, int, int]:
 
 
 def _policy_mismatch(baseline: Side, candidate: Side) -> str | None:
+    """Two outcome rules: different keys/thresholds, or feedback vs `assess` outcomes."""
     pb, pc = baseline.policy, candidate.policy
-    if pb and pc and pb.key is not None and pc.key is not None and not pb.same_rule(pc):
+    if pb is None or pc is None:
+        return None
+    mixed = (pb.key is None) != (pc.key is None)
+    if mixed or (pb.key is not None and not pb.same_rule(pc)):
         return f"baseline {pb.describe()} vs candidate {pc.describe()}"
     return None
 
@@ -150,6 +158,10 @@ def quality_criterion(
         table[r["baseline"]][r["candidate"]] += 1
     regressions = sum(1 for r in comparable if r["transition"] == "regression")
     gains = sum(1 for r in comparable if r["transition"] == "gain")
+    destabilized = sum(
+        1 for r in comparable if r["candidate"] == "unstable" and r["baseline"] != "unstable"
+    )
+    missing = sum(1 for r in rows if "missing" in (r["baseline"], r["candidate"]))
     floor, unstable, classified = noise_floor(baseline)
     n = len(comparable)
     result: dict[str, Any] = {
@@ -158,8 +170,11 @@ def quality_criterion(
         "comparable": n,
         "regressions": regressions,
         "gains": gains,
+        "destabilized": destabilized,
+        "missing": missing,
         "regression_rate": round(regressions / n, 4) if n else None,
         "gain_rate": round(gains / n, 4) if n else None,
+        "destabilized_rate": round(destabilized / n, 4) if n else None,
         "transitions": table,
         "inconclusive_examples": [
             {"example_id": r["example_id"], "reason_code": r["reason_code"]}
@@ -184,28 +199,43 @@ def quality_criterion(
         )
     elif n == 0:
         status = Verdict.INCONCLUSIVE
-        no_noise = any(r.get("reason_code") == ReasonCode.NO_NOISE_ESTIMATE for r in rows)
-        code = ReasonCode.NO_NOISE_ESTIMATE if no_noise else ReasonCode.QUALITY_UNKNOWN
+        row_codes = {r["reason_code"] for r in rows if "reason_code" in r}
+        code = next(
+            (c for c in REASON_PRIORITY if c.value in row_codes), ReasonCode.QUALITY_UNKNOWN
+        )
         reason = "No example is comparable on both sides (see inconclusive_examples)."
-    elif floor is None:
-        status, code = Verdict.INCONCLUSIVE, ReasonCode.NO_NOISE_ESTIMATE
-        reason = "No baseline example with k >= 2 known runs; the noise floor is unknown."
-    elif regressions / n > floor:
-        status, code = Verdict.FAIL, None
-        reason = (
-            f"{regressions}/{n} regressions ({regressions / n:.1%}) exceed the noise floor "
-            f"({floor:.1%})."
-        )
-    elif regressions == 0:
-        status, code = Verdict.PASS, None
-        reason = f"No stable regression over {n} comparable examples."
     else:
-        status, code = Verdict.INCONCLUSIVE, ReasonCode.WITHIN_NOISE
-        reason = (
-            f"{regressions}/{n} regressions ({regressions / n:.1%}) do not exceed the noise "
-            f"floor ({floor:.1%})."
-        )
-    improved = floor is not None and n > 0 and regressions == 0 and gains / n > floor
+        # a comparable row implies a classified baseline example, so the floor exists
+        assert floor is not None
+        if regressions / n > floor:
+            status, code = Verdict.FAIL, None
+            reason = (
+                f"{regressions}/{n} regressions ({regressions / n:.1%}) exceed the noise "
+                f"floor ({floor:.1%})."
+            )
+        elif missing:
+            status, code = Verdict.INCONCLUSIVE, ReasonCode.INSUFFICIENT_COVERAGE
+            reason = (
+                f"{missing} example(s) have no run on one side; quality cannot pass on "
+                "partial coverage (see inconclusive_examples)."
+            )
+        elif destabilized / n > floor:
+            status, code = Verdict.INCONCLUSIVE, ReasonCode.DESTABILIZED
+            reason = (
+                f"{destabilized}/{n} stable examples became unstable ({destabilized / n:.1%}), "
+                f"above the noise floor ({floor:.1%})."
+            )
+        elif regressions == 0:
+            status, code = Verdict.PASS, None
+            reason = f"No stable regression over {n} comparable examples."
+        else:
+            status, code = Verdict.INCONCLUSIVE, ReasonCode.WITHIN_NOISE
+            reason = (
+                f"{regressions}/{n} regressions ({regressions / n:.1%}) do not exceed the "
+                f"noise floor ({floor:.1%})."
+            )
+        reason += f" Destabilized (stable -> unstable): {destabilized}/{n}."
+    improved = status == Verdict.PASS and floor is not None and gains / n > floor
     result.update(
         status=status.value,
         reason_code=code.value if code else None,
@@ -453,7 +483,8 @@ def build_gate_sets(data: dict[str, Any]) -> str:
         + (f" ({q['reason_code']})" if q["reason_code"] else ""),
         f"  - noise floor {floor} ({basis['unstable']}/{basis['classified']} baseline unstable)"
         f" | regressions {q['regressions']}/{q['comparable']} | gains {q['gains']}/"
-        f"{q['comparable']}",
+        f"{q['comparable']} | destabilized {q['destabilized']}/{q['comparable']}"
+        f" | missing on one side {q['missing']}",
         f"  - {q['reason']}",
         "",
         "| baseline \\ candidate | " + " | ".join(CLASSES) + " |",

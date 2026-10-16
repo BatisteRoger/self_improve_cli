@@ -56,7 +56,9 @@ class ReasonCode(StrEnum):
     """Machine-readable cause of an inconclusive verdict (shared by v1 and v2)."""
 
     QUALITY_UNKNOWN = "quality_unknown"
+    INSUFFICIENT_COVERAGE = "insufficient_coverage"
     NO_NOISE_ESTIMATE = "no_noise_estimate"
+    DESTABILIZED = "destabilized"
     WITHIN_NOISE = "within_noise"
     CONDITIONS_DIFFER = "conditions_differ"
     EFFICIENCY_TRADEOFF = "efficiency_tradeoff"

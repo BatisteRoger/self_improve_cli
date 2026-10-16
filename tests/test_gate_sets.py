@@ -103,7 +103,43 @@ def test_unknown_and_missing_examples():
     data = gate_sets_data(_side({"a": "PUP", "b": "PPP"}, "b"), _side({"a": "PPP"}, "c"))
     assert data["reason_code"] == "quality_unknown"
     reasons = {r["example_id"]: r["reason_code"] for r in data["examples"]}
-    assert reasons == {"a": "quality_unknown", "b": "quality_unknown"}
+    assert reasons == {"a": "quality_unknown", "b": "insufficient_coverage"}
+
+
+def test_missing_side_blocks_pass_but_unknown_does_not():
+    base = {"a": "PPP", "b": "PPP", "c": "PPP"}
+    data = gate_sets_data(_side(base, "b"), _side({"a": "PPP", "b": "PPP"}, "c"))
+    assert (data["verdict"], data["reason_code"]) == ("inconclusive", "insufficient_coverage")
+    assert data["criteria"]["quality"]["missing"] == 1
+    # an unknown example (runs exist, outcome unknown) keeps the existing path
+    data = gate_sets_data(_side(base, "b"), _side({"a": "PPP", "b": "PPP", "c": "PUP"}, "c"))
+    assert data["verdict"] == "pass"
+    # a regression above the floor still fails despite the gap
+    data = gate_sets_data(_side(base, "b"), _side({"a": "FFF", "b": "PPP"}, "c"))
+    assert data["verdict"] == "fail"
+
+
+def test_mixed_outcome_sources_are_quality_unknown():
+    b = _side({"a": "PPP"}, "b", policy=OutcomePolicy("k", 0.5))
+    c = _side({"a": "PPP"}, "c", policy=OutcomePolicy(None, None, "assessment"))
+    data = gate_sets_data(b, c)
+    assert (data["verdict"], data["reason_code"]) == ("inconclusive", "quality_unknown")
+    assert "(assessment)" in data["reason"]
+
+
+def test_destabilization_above_floor_is_inconclusive():
+    base = {f"e{i}": "PPP" for i in range(8)}
+    cand = {f"e{i}": ("PFP" if i < 4 else "PPP") for i in range(8)}
+    data = gate_sets_data(_side(base, "b"), _side(cand, "c"))
+    q = data["criteria"]["quality"]
+    assert (data["verdict"], data["reason_code"]) == ("inconclusive", "destabilized")
+    assert q["destabilized"] == 4 and q["regressions"] == 0
+    # within the floor: still a pass, and the count is always printed
+    base["e7"] = "PFP"
+    cand = {f"e{i}": ("PFP" if i in (0, 7) else "PPP") for i in range(8)}
+    data = gate_sets_data(_side(base, "b"), _side(cand, "c"))
+    assert data["verdict"] == "pass"
+    assert "Destabilized (stable -> unstable): 1/8." in data["reason"]
 
 
 def test_policy_mismatch_is_quality_unknown():
