@@ -199,7 +199,12 @@ def _parse_id_file(path: str, load_trace: Any) -> list[tuple[str, str]]:
 
 def _load_side(arg: str, label: str, store: Any, override: Any) -> Any:
     """Resolve `@file` or an experiment name/session ID to a gate `Side` (offline)."""
-    from self_improve_cli.domain import OutcomePolicy, OutcomeStatus, outcome_from_policy
+    from self_improve_cli.domain import (
+        OutcomePolicy,
+        OutcomeSource,
+        OutcomeStatus,
+        outcome_from_policy,
+    )
     from self_improve_cli.metrics.efficiency import efficiency_summary
     from self_improve_cli.metrics.gate_sets import RunOutcome, Side
 
@@ -217,6 +222,27 @@ def _load_side(arg: str, label: str, store: Any, override: Any) -> Any:
             )
         status = outcome_from_policy(feedback, override)[0]
         return binary.get(status.value, "unknown")
+
+    # Human precedence (same principle as autofill): a human success / partial /
+    # fail assessment replaces a feedback-derived outcome; a human `unknown` does not.
+    sources = {"human": 0, "other": 0, "none": 0}
+
+    def _human(trace_id: str) -> str | None:
+        a = store.load_assessment(trace_id)
+        if a is None or a.outcome_source != OutcomeSource.HUMAN:
+            return None
+        if a.outcome == OutcomeStatus.UNKNOWN:
+            return None
+        sources["human"] += 1
+        return binary.get(a.outcome.value, "unknown")
+
+    def _outcomes_info(fallback: str) -> dict[str, Any]:
+        n = sources["human"]
+        return {
+            "basis": "feedback",
+            "human_overrides": n,
+            "description": f"human assessments where present ({n} overrides), else {fallback}",
+        }
 
     groups: dict[str, list[Any]] = {}
     models: set[str] = set()
@@ -241,20 +267,38 @@ def _load_side(arg: str, label: str, store: Any, override: Any) -> Any:
     if arg.startswith("@"):
         for example_id, trace_id in _parse_id_file(arg[1:], _load):
             if override is not None:
-                outcome = _from_feedback(trace_id)
+                outcome = _human(trace_id) or _from_feedback(trace_id)
             else:
                 assessment = store.load_assessment(trace_id)
+                if assessment is None:
+                    sources["none"] += 1
+                elif assessment.outcome_source == OutcomeSource.HUMAN:
+                    sources["human"] += 1
+                else:
+                    sources["other"] += 1
                 outcome = (
                     binary.get(assessment.outcome.value, "unknown") if assessment else "unknown"
                 )
             _add(example_id, trace_id, outcome)
         policy = override or OutcomePolicy(None, None, "assessment")
+        if override is not None:
+            outcomes = _outcomes_info(f"stored feedback under --outcome-key {override.describe()}")
+        else:
+            outcomes = {
+                "basis": "assessment",
+                "human_overrides": 0,
+                "description": (
+                    f"assess outcome per trace (source human {sources['human']}, other "
+                    f"{sources['other']}, no assessment {sources['none']}); partial and "
+                    "missing count as unknown"
+                ),
+            }
         conditions: dict[str, Any] = {
             "start_time": min(starts) if starts else None,
             "end_time": max(starts) if starts else None,
             "models": sorted(models) or None,
         }
-        return Side(label, "file", arg[1:], policy, groups, conditions, None)
+        return Side(label, "file", arg[1:], policy, groups, conditions, None, outcomes=outcomes)
 
     receipt = store.find_experiment(arg)
     if receipt is None:
@@ -264,12 +308,20 @@ def _load_side(arg: str, label: str, store: Any, override: Any) -> Any:
         )
     for example_id, runs in receipt.get("examples", {}).items():
         for run in runs:
-            if override is not None:
+            outcome = _human(run["trace_id"])
+            if outcome is None and override is not None:
                 outcome = _from_feedback(run["trace_id"])
-            else:
+            elif outcome is None:
                 outcome = binary.get(run.get("outcome", "unknown"), "unknown")
             _add(example_id, run["trace_id"], outcome)
     policy = override or OutcomePolicy.from_dict(receipt.get("outcome_policy"))
+    if override is not None:
+        fallback = f"stored feedback under --outcome-key {override.describe()}"
+    elif policy is not None:
+        fallback = f"receipt outcomes under the fetch policy {policy.describe()}"
+    else:
+        fallback = "receipt outcomes (no outcome policy at fetch: all unknown)"
+    outcomes = _outcomes_info(fallback)
     conditions = {**(receipt.get("conditions") or {}), "models": sorted(models) or None}
     complete = receipt.get("complete")
     failures = receipt.get("failures")
@@ -283,6 +335,7 @@ def _load_side(arg: str, label: str, store: Any, override: Any) -> Any:
         receipt.get("dataset_id"),
         complete=complete if isinstance(complete, bool) else None,
         failures=len(failures) if isinstance(failures, list) else None,
+        outcomes=outcomes,
     )
 
 

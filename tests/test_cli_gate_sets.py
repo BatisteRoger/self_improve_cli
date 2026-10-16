@@ -8,9 +8,12 @@ import pytest
 
 from self_improve_cli.cli.main import main
 from self_improve_cli.domain import (
+    Assessment,
     ExperimentListing,
     ExperimentRunRef,
     FeedbackScore,
+    OutcomeSource,
+    OutcomeStatus,
     RunType,
     Trace,
 )
@@ -119,6 +122,40 @@ def test_gate_sets_id_file_trace_under_two_examples(store, tmp_path, capsys):
     ids.write_text("a s-base-a-0\nb s-base-a-0\n", encoding="utf-8")
     assert _gate(tmp_path, "--baseline", f"@{ids}", "--candidate", "s-cand") == 1
     assert "ids.txt:2" in capsys.readouterr().err
+
+
+def _assess(store: TraceStore, trace_id: str, outcome: str, source: str = "human") -> None:
+    store.save_assessment(Assessment(trace_id, "t", OutcomeStatus(outcome), OutcomeSource(source)))
+
+
+def test_gate_sets_human_assessment_overrides_receipt(store, tmp_path, capsys):
+    for i in range(3):
+        _assess(store, f"s-cand-a-{i}", "success")
+    _assess(store, "s-cand-b-0", "unknown")  # a human `unknown` is not a judgment
+    _assess(store, "s-cand-c-0", "fail", source="evaluator")  # not human: ignored
+    assert _gate(tmp_path, "--baseline", "s-base", "--candidate", "s-cand") == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["criteria"]["quality"]["regressions"] == 0
+    outcomes = data["candidate"]["outcomes"]
+    assert outcomes["basis"] == "feedback" and outcomes["human_overrides"] == 3
+    assert outcomes["description"].startswith("human assessments where present (3 overrides)")
+    assert "fetch policy k" in outcomes["description"]
+    # the override also applies when outcomes are re-derived with --outcome-key
+    assert (
+        _gate(tmp_path, "--baseline", "s-base", "--candidate", "s-cand", "--outcome-key", "k") == 0
+    )
+    main(["gate", "--baseline", "s-base", "--candidate", "s-cand", "--data-dir", str(tmp_path)])
+    assert "Candidate outcomes: human assessments where present (3" in capsys.readouterr().out
+
+
+def test_gate_sets_experiment_vs_assess_file_is_mixed(store, tmp_path, capsys):
+    ids = tmp_path / "ids.txt"
+    ids.write_text("a s-cand-a-0\na s-cand-a-1\n", encoding="utf-8")
+    assert _gate(tmp_path, "--baseline", "s-base", "--candidate", f"@{ids}") == 2
+    data = json.loads(capsys.readouterr().out)
+    assert data["reason_code"] == "quality_unknown"
+    assert "(assessment)" in data["reason"]
+    assert data["candidate"]["outcomes"]["basis"] == "assessment"
 
 
 def test_gate_sets_outcome_key_without_feedback_file(store, tmp_path, capsys):

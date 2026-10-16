@@ -80,6 +80,8 @@ class Side:
     dataset_id: str | None = None
     complete: bool | None = None  # None: not recorded (id files, older receipts)
     failures: int | None = None
+    # which evidence decided pass/fail: basis, human_overrides, description
+    outcomes: dict[str, Any] = field(default_factory=dict)
 
 
 def classify(runs: list[RunOutcome] | None) -> str:
@@ -405,6 +407,7 @@ def _side_summary(side: Side) -> dict[str, Any]:
         "outcome_policy": side.policy.to_dict() if side.policy else None,
         "complete": side.complete,
         "failures": side.failures,
+        "outcomes": side.outcomes or None,
     }
 
 
@@ -413,6 +416,10 @@ def _completeness(side: dict[str, Any]) -> str:
         return "completeness unavailable"
     failures = "unavailable" if side["failures"] is None else side["failures"]
     return f"{'complete' if side['complete'] else 'INCOMPLETE'}, failures {failures}"
+
+
+def _outcomes_line(side: dict[str, Any]) -> str:
+    return (side["outcomes"] or {}).get("description") or "source unavailable"
 
 
 def gate_sets_data(
@@ -477,6 +484,8 @@ def build_gate_sets(data: dict[str, Any]) -> str:
         f"{_completeness(b)})",
         f"Candidate: {c['label']} ({c['examples']} examples, k={c['k']['min']}-{c['k']['max']}, "
         f"{_completeness(c)})",
+        f"Baseline outcomes: {_outcomes_line(b)}",
+        f"Candidate outcomes: {_outcomes_line(c)}",
         f"Verdict reason: {data['reason']}",
         "",
         f"- Quality (APPROXIMATE): {q['status']}"
