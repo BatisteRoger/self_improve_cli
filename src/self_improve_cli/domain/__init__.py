@@ -9,6 +9,13 @@ provider payloads into this model at the boundary.
   alongside traces.
 """
 
+from self_improve_cli.domain.experiment import (
+    ExperimentListing,
+    ExperimentRunRef,
+    OutcomePolicy,
+    outcome_from_policy,
+    parse_outcome_key,
+)
 from self_improve_cli.domain.records import (
     Assessment,
     FeedbackScore,
@@ -33,6 +40,9 @@ from self_improve_cli.domain.trace import (
 __all__ = [
     "SCHEMA_VERSION",
     "Assessment",
+    "ExperimentListing",
+    "ExperimentRunRef",
+    "OutcomePolicy",
     "FeedbackScore",
     "Finding",
     "Message",
@@ -46,5 +56,7 @@ __all__ = [
     "ToolCall",
     "Trace",
     "autofill_assessment",
+    "outcome_from_policy",
+    "parse_outcome_key",
     "run_to_summary",
 ]

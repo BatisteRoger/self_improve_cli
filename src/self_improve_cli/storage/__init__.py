@@ -8,6 +8,8 @@ Data layout (all under a configurable data root, gitignored):
 - data/traces/<trace_id>/raw.json         — raw trace (only if keep_raw=True)
 - data/traces/<trace_id>/assessment.json  — manual task & outcome assessment
 - data/traces/<trace_id>/findings.json    — persisted analyst findings
+- data/traces/<trace_id>/feedback.json    — feedback key + numeric score
+- data/experiments/<session_id>/experiment.json — experiment receipt
 - data/ter/<trace_id>/                    — derived representations
 - data/evaluations/<trace_id>/            — evaluations (versioned knowledge)
 
@@ -19,6 +21,7 @@ mixins: `traces` (sanitized/raw files), `records` (assessment + findings),
 
 from self_improve_cli.storage.ati import AtiMixin
 from self_improve_cli.storage.base import _validate_id
+from self_improve_cli.storage.experiments import ExperimentsMixin
 from self_improve_cli.storage.prompts import PromptsMixin
 from self_improve_cli.storage.records import RecordsMixin
 from self_improve_cli.storage.ter import TerMixin
@@ -27,7 +30,7 @@ from self_improve_cli.storage.traces import TracesMixin
 __all__ = ["TraceStore", "_validate_id"]
 
 
-class TraceStore(TracesMixin, RecordsMixin, TerMixin, PromptsMixin, AtiMixin):
+class TraceStore(TracesMixin, RecordsMixin, ExperimentsMixin, TerMixin, PromptsMixin, AtiMixin):
     """Safe local storage for traces and analyst artifacts.
 
     Composed from per-area mixins; see `storage/base.py` for the data-root

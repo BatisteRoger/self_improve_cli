@@ -87,6 +87,11 @@ The receipt answers two questions:
 `gate` answers both from the assessments and the `compare` totals: exit 0
 pass, 1 fail, 2 inconclusive (missing outcome, or stable quality at a
 higher cost). It does not check for new errors — the skeleton does.
+One pair is stochastic: when the target runs as a LangSmith experiment with
+repetitions, prefer `fetch --experiment <name> --outcome-key ...` on both
+sides, then `gate --baseline <exp> --candidate <exp>` — a per-example flip
+verdict above the baseline's own noise floor (`reason_code` says why when
+inconclusive).
 Pass -> the candidate is worth keeping; say so to the reviewer with the
 receipt attached. Capability regressed -> revert or iterate. Either way the
 receipts stay on disk for the next iteration.

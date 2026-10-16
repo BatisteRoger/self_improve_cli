@@ -11,7 +11,13 @@ import json
 import logging
 from pathlib import Path
 
-from self_improve_cli.domain import Assessment, Finding, OutcomeSource, OutcomeStatus
+from self_improve_cli.domain import (
+    Assessment,
+    FeedbackScore,
+    Finding,
+    OutcomeSource,
+    OutcomeStatus,
+)
 from self_improve_cli.storage.base import StoreBase, _dataclass_to_dict, write_json
 
 logger = logging.getLogger(__name__)
@@ -55,6 +61,35 @@ class RecordsMixin(StoreBase):
             logger.info("Cleared assessment for trace %s", trace_id)
             return True
         return False
+
+    # -- Feedback --------------------------------------------------------
+
+    def save_feedback(
+        self, trace_id: str, scores: list[FeedbackScore], notes: dict[str, str] | None = None
+    ) -> Path:
+        """Persist feedback key + numeric score + point count (no comments) alongside the trace.
+
+        `notes` maps a key to a short CLI-authored note (never source text).
+        """
+        trace_dir = self._trace_dir(trace_id)
+        trace_dir.mkdir(parents=True, exist_ok=True)
+        path = trace_dir / "feedback.json"
+        entries = []
+        for f in scores:
+            entry: dict[str, object] = {"key": f.key, "score": f.score, "n": f.n}
+            if notes and f.key in notes:
+                entry["note"] = notes[f.key]
+            entries.append(entry)
+        write_json(path, entries)
+        return path
+
+    def load_feedback(self, trace_id: str) -> list[FeedbackScore] | None:
+        """Load stored feedback scores, or None when none were stored."""
+        path = self._trace_dir(trace_id) / "feedback.json"
+        if not path.exists():
+            return None
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return [FeedbackScore(key=d["key"], score=d.get("score"), n=d.get("n")) for d in data]
 
     # -- Findings --------------------------------------------------------
 

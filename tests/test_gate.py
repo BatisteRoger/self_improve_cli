@@ -74,6 +74,14 @@ def test_decide_verdict(quality, efficiency, expected):
     assert decide_verdict(quality, efficiency)[0] == expected
 
 
+def test_decide_verdict_reason_codes():
+    assert decide_verdict(QualityStatus.UNKNOWN, EfficiencyStatus.EQUAL)[2] == "quality_unknown"
+    assert (
+        decide_verdict(QualityStatus.STABLE, EfficiencyStatus.DEGRADED)[2] == "efficiency_tradeoff"
+    )
+    assert decide_verdict(QualityStatus.REGRESSED, EfficiencyStatus.EQUAL)[2] is None
+
+
 def test_quality_axis_ranking_and_unknown():
     def a(o: OutcomeStatus) -> Assessment:
         return Assessment(trace_id="x", task="", outcome=o)
@@ -176,9 +184,11 @@ def test_gate_json_shape(store, tmp_path, capsys):
     assert _gate(tmp_path) == 0
     data = json.loads(capsys.readouterr().out)
     assert set(data) == {
+        "mode",
         "trace_before",
         "trace_after",
         "verdict",
+        "reason_code",
         "reason",
         "rule",
         "quality",
@@ -186,6 +196,7 @@ def test_gate_json_shape(store, tmp_path, capsys):
         "next",
     }
     assert data["verdict"] == "pass"
+    assert data["reason_code"] is None
     assert data["quality"]["before"] == {
         "outcome": "partial",
         "outcome_source": "human",

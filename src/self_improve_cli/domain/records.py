@@ -62,6 +62,7 @@ class FeedbackScore:
 
     key: str
     score: float | None = None
+    n: int | None = None  # feedback points averaged into `score`, when the source says
 
 
 # -- Assessment auto-fill (on fetch) ------------------------------------------
@@ -151,8 +152,12 @@ def autofill_assessment(
     existing: Assessment | None,
     trace: Trace,
     feedback: list[FeedbackScore] | None,
+    policy: Any = None,
 ) -> Assessment | None:
     """Return the assessment to save after a fetch, or None to leave it as is.
+
+    `policy` (an `OutcomePolicy`) replaces the binary feedback rule with the
+    declared key/threshold when given.
 
     Human precedence: an assessment with source `human` is never touched.
     Otherwise only empty fields are filled — a re-fetch never erases analyst
@@ -162,7 +167,15 @@ def autofill_assessment(
     if existing is not None and existing.outcome_source == OutcomeSource.HUMAN:
         return None
     task = initial_task(trace)
-    outcome, source, notes = outcome_from_feedback(feedback)
+    if policy is not None:
+        from self_improve_cli.domain.experiment import outcome_from_policy
+
+        outcome, notes = outcome_from_policy(feedback, policy)
+        source = (
+            OutcomeSource.EVALUATOR if outcome != OutcomeStatus.UNKNOWN else OutcomeSource.UNKNOWN
+        )
+    else:
+        outcome, source, notes = outcome_from_feedback(feedback)
     base = existing or Assessment(trace_id=trace.trace_id, task="")
     merged = replace(base, task=base.task or task)
     if (
