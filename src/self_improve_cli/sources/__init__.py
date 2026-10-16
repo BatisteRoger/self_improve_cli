@@ -11,6 +11,7 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 from self_improve_cli.domain import (
+    ExperimentListing,
     FeedbackScore,
     ProjectSummary,
     RunResolution,
@@ -59,6 +60,10 @@ class TraceSource(ABC):
     def list_projects(self, limit: int = 50) -> list[ProjectSummary]:
         """List accessible projects, most recent first."""
         ...
+
+    def fetch_experiment(self, name: str) -> ExperimentListing:
+        """List an experiment session's runs grouped by dataset example."""
+        raise NotImplementedError("This source does not support experiments.")
 
     def fetch_feedback(self, trace_id: str) -> list[FeedbackScore] | None:
         """Return feedback scores recorded on the trace's root run.

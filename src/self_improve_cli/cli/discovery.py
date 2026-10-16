@@ -13,7 +13,9 @@ import sys
 from typing import Any
 
 from self_improve_cli.cli.common import (
+    EXIT_ERROR,
     EXIT_OK,
+    EXIT_USAGE,
     _get_store,
     _output,
     add_common_opts,
@@ -156,9 +158,126 @@ def _autofill_assessment(source: Any, store: Any, trace: Trace) -> str:
     return "created" if existing is None else "updated"
 
 
+def _cmd_fetch_experiment(args: argparse.Namespace) -> int:
+    """Fetch every run of an experiment session and write experiment.json."""
+    from datetime import UTC, datetime
+
+    from self_improve_cli.domain import outcome_from_policy, parse_outcome_key
+    from self_improve_cli.sources.langsmith import LangSmithSource
+
+    policy = parse_outcome_key(args.outcome_key) if args.outcome_key else None
+    source = LangSmithSource(project_name=args.project)
+    listing = source.fetch_experiment(args.experiment)
+    store = _get_store(args)
+    backend = _resolve_anonymizer(args)
+    examples: dict[str, list[dict[str, Any]]] = {}
+    failures: list[dict[str, str]] = []
+    counts = {"stored": 0, "skipped": 0, "failed": 0}
+    outcomes = {"success": 0, "fail": 0, "unknown": 0}
+    for ref in listing.runs:
+        group = examples.setdefault(ref.example_id, [])
+        if (store.traces_dir / ref.trace_id / "sanitized.json").exists():
+            counts["skipped"] += 1  # sanitized traces are immutable: resume skips them
+            trace = store.load_trace(ref.trace_id)
+        else:
+            try:
+                trace = source.fetch_trace(ref.trace_id, project_id=listing.session_id)
+                if not trace.runs:
+                    raise ValueError("no runs returned")
+            except Exception as exc:  # noqa: BLE001 — one bad run must not abort the set
+                counts["failed"] += 1
+                reason = f"{type(exc).__name__}: {exc}"[:200]
+                failures.append(
+                    {
+                        "run_id": ref.run_id,
+                        "example_id": ref.example_id,
+                        "stage": "trace_fetch",
+                        "reason": reason,
+                    }
+                )
+                continue
+            if args.keep_raw:
+                store.save_raw(trace)
+            trace, _ = anonymize_trace(trace, backend=backend)
+            store.save_sanitized(trace)
+            write_ter(ref.trace_id, trace.runs, store)
+            counts["stored"] += 1
+        store.save_feedback(ref.trace_id, ref.feedback)
+        existing = store.load_assessment(ref.trace_id)
+        updated = autofill_assessment(existing, trace, ref.feedback, policy=policy)
+        if updated is not None:
+            updated.assessed_at = datetime.now(UTC).isoformat()
+            store.save_assessment(updated)
+        outcome = outcome_from_policy(ref.feedback, policy)[0].value
+        outcomes[outcome] += 1
+        group.append(
+            {
+                "run_id": ref.run_id,
+                "trace_id": ref.trace_id,
+                "status": ref.status,
+                "outcome": outcome,
+            }
+        )
+    complete = listing.complete and not failures
+    receipt = {
+        "schema_version": 1,
+        "source": "langsmith",
+        "experiment_name": listing.name,
+        "session_id": listing.session_id,
+        "dataset_id": listing.dataset_id,
+        "fetched_at": datetime.now(UTC).isoformat(),
+        "complete": complete,
+        "outcome_policy": policy.to_dict() if policy else None,
+        "conditions": listing.conditions,
+        "examples": examples,
+        "failures": failures,
+    }
+    path = store.save_experiment(receipt)
+    sizes = [len(v) for v in examples.values()] or [0]
+    _output(
+        {
+            "experiment_name": listing.name,
+            "session_id": listing.session_id,
+            "dataset_id": listing.dataset_id,
+            "complete": complete,
+            "examples": len(examples),
+            "runs_per_example": {"min": min(sizes), "max": max(sizes)},
+            "traces": counts,
+            "outcomes": outcomes,
+            "outcome_policy": receipt["outcome_policy"],
+            "anonymizer_backend": backend,
+            "receipt_path": str(path),
+            "next": [f"self-improve gate --baseline '{listing.name}' --candidate <other>"],
+        },
+        args,
+    )
+    if not complete:
+        print(
+            "Warning: experiment fetch incomplete; re-run the same command to resume.",
+            file=sys.stderr,
+        )
+        return EXIT_ERROR
+    return EXIT_OK
+
+
 def _cmd_fetch(args: argparse.Namespace) -> int:
     """Fetch a trace, anonymize it, and persist the sanitized version."""
     from self_improve_cli.sources.langsmith import LangSmithSource
+
+    usage = None
+    if bool(args.experiment) == bool(args.trace_id):
+        usage = (
+            "pass either `fetch <trace_id>` or `fetch --experiment <name>`, not both or neither."
+        )
+    elif args.experiment and args.from_run:
+        usage = "--from-run cannot be combined with --experiment."
+    elif args.outcome_key and not args.experiment:
+        usage = "--outcome-key is only valid with --experiment."
+    if usage:
+        print(f"Error: {usage}", file=sys.stderr)
+        return EXIT_USAGE
+    if args.experiment:
+        return _cmd_fetch_experiment(args)
 
     source = LangSmithSource(project_name=args.project)
 
@@ -280,6 +399,18 @@ def register(sub: argparse._SubParsersAction) -> None:
         "'presidio' (force, errors if unavailable), 'regex' (skip presidio, faster). "
         "Overrides SELFIIMPROVE_ANONYMIZER env var. Default: auto.",
     )
-    p.add_argument("trace_id")
+    p.add_argument(
+        "--experiment",
+        default=None,
+        help="Fetch every run of a LangSmith experiment session (by name); writes "
+        "data/experiments/<session_id>/experiment.json grouping trace IDs by example.",
+    )
+    p.add_argument(
+        "--outcome-key",
+        default=None,
+        help="With --experiment: feedback key deciding pass/fail. 'KEY' needs a binary "
+        "0/1 score; 'KEY>=T' thresholds a continuous score. Missing key -> unknown.",
+    )
+    p.add_argument("trace_id", nargs="?", default=None)
     add_common_opts(p)
     p.set_defaults(func=_cmd_fetch)

@@ -16,6 +16,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from self_improve_cli.domain import (
+    ExperimentListing,
+    ExperimentRunRef,
     FeedbackScore,
     Message,
     ProjectSummary,
@@ -295,6 +297,56 @@ def _sdk_run_to_canonical(sdk_run: Any) -> Run:
 
 _FEEDBACK_LIMIT = 100
 
+# datasets.experiment_runs.query selects (strict allowlist; unknown -> 422).
+# No INPUTS/OUTPUTS: trace content comes from fetch_trace, then anonymization.
+_EXPERIMENT_SELECTS = [
+    "ID",
+    "NAME",
+    "STATUS",
+    "TRACE_ID",
+    "PROJECT_ID",
+    "REFERENCE_EXAMPLE_ID",
+    "FEEDBACK_STATS",
+    "TOTAL_TOKENS",
+    "EXTRA",
+    "METADATA",
+]
+_EXPERIMENT_MAX_RUNS = 5000
+
+
+def _iso(v: Any) -> str | None:
+    return v.isoformat() if hasattr(v, "isoformat") else (str(v) if v else None)
+
+
+def _experiment_conditions(session: Any) -> dict[str, Any]:
+    """Run conditions from the session metadata recorded by SDK `evaluate()`.
+
+    Only these fields cross the boundary (git remote/branch are dropped).
+    Absent keys stay None: unavailable, never guessed.
+    """
+    meta = (getattr(session, "extra", None) or {}).get("metadata") or {}
+    git_raw = meta.get("git")
+    git: dict[str, Any] = git_raw if isinstance(git_raw, dict) else {}
+    return {
+        "start_time": _iso(getattr(session, "start_time", None)),
+        "end_time": _iso(getattr(session, "end_time", None)),
+        "revision_id": meta.get("revision_id"),
+        "git_commit": git.get("commit"),
+        "git_dirty": git.get("dirty"),
+        "dataset_version": meta.get("dataset_version"),
+        "dataset_splits": meta.get("dataset_splits"),
+    }
+
+
+def _feedback_stats_to_scores(stats: Any) -> list[FeedbackScore]:
+    """Key + mean numeric score per key; comments are dropped here."""
+    out: list[FeedbackScore] = []
+    for key, st in (stats or {}).items():
+        avg = st.get("avg") if isinstance(st, dict) else getattr(st, "avg", None)
+        num = float(avg) if isinstance(avg, (int, float)) else None
+        out.append(FeedbackScore(key=str(key), score=num))
+    return out
+
 
 def _sdk_feedback_to_score(fb: Any) -> FeedbackScore:
     """Keep key + numeric score only (bool counts as 0/1)."""
@@ -545,6 +597,57 @@ class LangSmithSource(TraceSource):
             _sdk_feedback_to_score(fb)
             for fb in client.list_feedback(run_ids=[trace_id], limit=_FEEDBACK_LIMIT)
         ]
+
+    def fetch_experiment(self, name: str) -> ExperimentListing:
+        """List an experiment session's root runs grouped by dataset example.
+
+        The allowlist applies to the experiment name (sessions are tracing
+        projects). Example inputs/outputs and feedback comments never cross
+        this boundary. Runs are deduplicated by run ID.
+        """
+        _check_project_allowed(name)
+        client = self._get_client()
+        logger.info("Listing experiment %s", name)
+
+        async def _fetch() -> tuple[Any, list[ExperimentRunRef], bool]:
+            session = await client.aread_project(project_name=name)
+            if getattr(session, "reference_dataset_id", None) is None:
+                raise ValueError(f"Project '{name}' is not an experiment (no reference dataset).")
+            seen: set[str] = set()
+            refs: list[ExperimentRunRef] = []
+            async for item in client.datasets.experiment_runs.query(
+                str(session.reference_dataset_id),
+                experiment_ids=[str(session.id)],
+                page_size=20,
+                selects=_EXPERIMENT_SELECTS,
+            ):
+                for run in item.runs or []:
+                    if run.id is None or str(run.id) in seen:
+                        continue
+                    seen.add(str(run.id))
+                    refs.append(
+                        ExperimentRunRef(
+                            run_id=str(run.id),
+                            trace_id=str(run.trace_id or run.id),
+                            example_id=str(item.id),
+                            status=run.status,
+                            feedback=_feedback_stats_to_scores(run.feedback_stats),
+                        )
+                    )
+                if len(refs) >= _EXPERIMENT_MAX_RUNS:
+                    logger.warning("Experiment run cap (%d) reached", _EXPERIMENT_MAX_RUNS)
+                    return session, refs, False
+            return session, refs, True
+
+        session, refs, complete = _run_async(_fetch())
+        return ExperimentListing(
+            name=name,
+            session_id=str(session.id),
+            dataset_id=str(session.reference_dataset_id),
+            conditions=_experiment_conditions(session),
+            runs=sorted(refs, key=lambda r: (r.example_id, r.run_id)),
+            complete=complete,
+        )
 
     def list_projects(self, limit: int = 50) -> list[ProjectSummary]:
         """List accessible LangSmith projects, most recent first."""
