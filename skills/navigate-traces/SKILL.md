@@ -97,7 +97,12 @@ is its step-level counterpart: where the two trajectories diverged.
 `gate <trace_before> <trace_after>` turns the pair into a verdict
 (pass / fail / inconclusive, exit 0/1/2) from both `assess` outcomes and
 the `compare` totals — record an outcome on both traces first, or the
-verdict is inconclusive.
+verdict is inconclusive. For repeated experiment sets, prefer the set
+form `gate --baseline <experiment|@file> --candidate <experiment|@file>
+--outcome-key KEY`, which compares per-example stable outcomes across
+repetitions and guards verdicts against a measured baseline noise floor —
+a single pair can at best be inconclusive evidence about a nondeterministic
+agent.
 
 ## Principles
 
