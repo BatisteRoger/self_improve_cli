@@ -12,6 +12,7 @@ from self_improve_cli.metrics.gate_sets import (
     build_gate_sets,
     classify,
     efficiency_criterion,
+    example_rows,
     gate_sets_data,
     noise_floor,
 )
@@ -164,8 +165,31 @@ def test_efficiency_degraded_is_tradeoff_and_conjunctive():
 def test_missing_tokens_are_unavailable_not_zero():
     base = Side("b", "experiment", "b", POLICY, {"a": _runs("PP", "a", "b", tokens=None)})
     cand = Side("c", "experiment", "c", POLICY, {"a": _runs("PP", "a", "c", tokens=0)})
-    tokens = efficiency_criterion(base, cand)["metrics"]["tokens"]
+    tokens = efficiency_criterion(base, cand, example_rows(base, cand))["metrics"]["tokens"]
     assert tokens["unavailable"] == 1 and tokens["median_delta"] is None
+    assert tokens["direction"] == "unavailable"
+
+
+def test_all_unavailable_efficiency_is_not_a_pass():
+    runs = {"a": [RunOutcome(f"x{i}", "pass", None) for i in range(2)]}
+    base = Side("b", "experiment", "b", POLICY, runs)
+    cand = Side("c", "experiment", "c", POLICY, runs)
+    eff = gate_sets_data(base, cand)["criteria"]["efficiency"]
+    assert eff["status"] == "unavailable"
+    assert {m["direction"] for m in eff["metrics"].values()} == {"unavailable"}
+
+
+def test_efficiency_counts_only_comparable_examples():
+    base = Side("b", "experiment", "b", POLICY, {"a": _runs("PP", "a", "b", tokens=100)})
+    cand = Side(
+        "c",
+        "experiment",
+        "c",
+        POLICY,
+        {"a": _runs("PP", "a", "c", tokens=100), "z": _runs("PP", "z", "c", tokens=900)},
+    )
+    tokens = efficiency_criterion(base, cand, example_rows(base, cand))["metrics"]["tokens"]
+    assert (tokens["up"], tokens["within_spread"], tokens["unavailable"]) == (0, 1, 0)
 
 
 def test_strict_conditions_and_unavailable():

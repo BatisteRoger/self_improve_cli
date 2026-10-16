@@ -264,13 +264,20 @@ def _values(runs: list[RunOutcome] | None, name: str) -> list[int] | None:
     return [v for v in vals if v is not None]
 
 
-def efficiency_criterion(baseline: Side, candidate: Side) -> dict[str, Any]:
-    """Per-metric counts of examples whose candidate median left the baseline range."""
+def efficiency_criterion(
+    baseline: Side, candidate: Side, rows: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Per-metric counts of comparable examples whose candidate median left the baseline range.
+
+    A metric measured on no example is `unavailable`, never `equal`; when every
+    metric is unavailable the criterion is `unavailable` and does not count as a pass.
+    """
+    examples = [r["example_id"] for r in rows if "transition" in r]
     metrics: dict[str, dict[str, Any]] = {}
     for name in METRICS:
         counts = {"up": 0, "down": 0, "within_spread": 0, "unavailable": 0}
         deltas: list[float] = []
-        for ex in sorted(set(baseline.groups) | set(candidate.groups)):
+        for ex in examples:
             b = _values(baseline.groups.get(ex), name)
             c = _values(candidate.groups.get(ex), name)
             if b is None or c is None or len(b) < 2:
@@ -284,7 +291,9 @@ def efficiency_criterion(baseline: Side, candidate: Side) -> dict[str, Any]:
                 counts["down"] += 1
             else:
                 counts["within_spread"] += 1
-        if counts["up"] > counts["down"]:
+        if not deltas:
+            direction = "unavailable"
+        elif counts["up"] > counts["down"]:
             direction = "degraded"
         elif counts["down"] > counts["up"]:
             direction = "improved"
@@ -296,14 +305,20 @@ def efficiency_criterion(baseline: Side, candidate: Side) -> dict[str, Any]:
             "median_delta": median(deltas) if deltas else None,
         }
     degraded = [n for n, m in metrics.items() if m["direction"] == "degraded"]
+    unavailable = [n for n, m in metrics.items() if m["direction"] == "unavailable"]
     if degraded:
-        status, code = Verdict.INCONCLUSIVE, ReasonCode.EFFICIENCY_TRADEOFF
+        status, code = Verdict.INCONCLUSIVE.value, ReasonCode.EFFICIENCY_TRADEOFF
         reason = f"Degraded beyond the baseline spread: {', '.join(degraded)}."
+    elif len(unavailable) == len(METRICS):
+        status, code = "unavailable", None
+        reason = "No metric measured on a comparable example with baseline k >= 2."
     else:
-        status, code = Verdict.PASS, None
+        status, code = Verdict.PASS.value, None
         reason = "No metric degraded beyond the baseline spread."
+        if unavailable:
+            reason += f" Unavailable: {', '.join(unavailable)}."
     return {
-        "status": status.value,
+        "status": status,
         "reason_code": code.value if code else None,
         "reason": reason,
         "approximate": True,
@@ -428,7 +443,7 @@ def gate_sets_data(
     """Build the structured experiment-set gate receipt."""
     rows = example_rows(baseline, candidate)
     quality = quality_criterion(baseline, candidate, rows)
-    efficiency = efficiency_criterion(baseline, candidate)
+    efficiency = efficiency_criterion(baseline, candidate, rows)
     facts = condition_facts(baseline, candidate)
     differing = [f["name"] for f in facts if f["state"] == "differs"]
     conditions: dict[str, Any] = {"status": "info", "reason_code": None, "facts": facts}
