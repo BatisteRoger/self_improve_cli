@@ -298,7 +298,8 @@ def _sdk_run_to_canonical(sdk_run: Any) -> Run:
 _FEEDBACK_LIMIT = 100
 
 # datasets.experiment_runs.query selects (strict allowlist; unknown -> 422).
-# No INPUTS/OUTPUTS: trace content comes from fetch_trace, then anonymization.
+# No INPUTS/OUTPUTS/EXTRA/METADATA: only what the listing uses crosses the wire;
+# trace content and token usage come from fetch_trace, then anonymization.
 _EXPERIMENT_SELECTS = [
     "ID",
     "NAME",
@@ -307,9 +308,6 @@ _EXPERIMENT_SELECTS = [
     "PROJECT_ID",
     "REFERENCE_EXAMPLE_ID",
     "FEEDBACK_STATS",
-    "TOTAL_TOKENS",
-    "EXTRA",
-    "METADATA",
 ]
 _EXPERIMENT_MAX_RUNS = 5000
 
