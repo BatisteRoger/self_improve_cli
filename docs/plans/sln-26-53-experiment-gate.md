@@ -326,7 +326,7 @@ CLI (`tests/test_cli.py` / new `tests/test_cli_gate_sets.py`):
 - `fetch --experiment` with a fake source: a run whose trace fetch fails -> receipt `complete: false`, exit 1; resume skips stored traces; `--outcome-key` propagates to assessment.json.
 - `gate --baseline/--candidate` with stored receipts and `@file` (both line forms, missing example id error); usage errors (mixing positional and flags, same set twice, different datasets); JSON and Markdown paths; v1 positional path unchanged plus `reason_code`.
 
-Manual live acceptance (Batiste runs; needs `LANGSMITH_API_KEY` and network):
+Manual live acceptance (operator runs; needs `LANGSMITH_API_KEY` and network):
 
 1. `self-improve fetch --experiment "financial-agent baseline (lila-2040, dataset v2 iteration, x3)" --outcome-key "correctness>=<T>"` and the same for `variant A3 (...)`. Expect 8 examples x 3 runs, `complete: true`, outcomes not all unknown.
 2. `self-improve gate --baseline "<baseline name>" --candidate "<variant name>" --format json`. Check: transitions sum to N, floor matches a hand count, confounds populated or `unavailable` with reason, exit code matches verdict.
