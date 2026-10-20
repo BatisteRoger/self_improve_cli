@@ -1,6 +1,6 @@
 ---
 name: get-started
-description: First-read onboarding for an analyst agent — self-assess which capabilities your harness provides (shell commands, file writes, running the target agent), verify the local setup with `self-improve doctor`, and pick the right skill for the job. Use when working with this CLI for the first time, or to check whether a full improvement loop is possible in the current environment.
+description: First-read onboarding for an analyst agent — self-assess harness capabilities (shell, file writes, running the target agent), verify setup with `self-improve doctor`, and pick the right skill. Use on first contact with this CLI or to check whether a full improvement loop is possible here.
 ---
 
 # Get started as an analyst agent
