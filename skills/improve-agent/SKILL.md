@@ -1,6 +1,6 @@
 ---
 name: improve-agent
-description: Run one iteration of the observe-diagnose-intervene-verify loop on a target agent — run its task or eval, fetch the trace, diagnose, persist findings, and produce a compare receipt after a change. Use when improving an agent's quality, cost, or speed across iterations — not for one-off diagnosis (use analyze-agent).
+description: Run one observe-diagnose-intervene-verify iteration on a target agent — task run, trace fetch, diagnosis, persisted findings, compare receipt. For one-off diagnosis: `analyze-agent`.
 ---
 
 # Improve an agent through the loop

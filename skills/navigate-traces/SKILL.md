@@ -1,6 +1,6 @@
 ---
 name: navigate-traces
-description: Choose the cheapest self-improve CLI view that answers a specific trace-analysis question, and stop when the question is answered. Use when deciding which CLI command answers a question about a LangSmith trace already fetched locally — not for fetching, listing, or general exploration.
+description: Pick the cheapest self-improve CLI view answering a trace or prompt-hub question, and stop when answered — "what happened", "what the model saw", "what a template says". Not for fetching or exploring.
 ---
 
 # Navigate traces by question
@@ -31,6 +31,8 @@ a template.
 | "Which steps errored or were cancelled?" | `skeleton --errors-only` | `error-neighborhood` for context around each error |
 | "Why did this tool call fail?" | `run-detail` on the tool run | `context-at` for the next model input |
 | "Did the model receive that tool result/error?" | `context-at` for the step | `run-detail --inputs-only` on the next LLM run |
+| "What instructions did the model actually see (rendered system prompt, injected per-agent variables)?" | `run-detail --inputs-only` on the target LLM run (its system message carries the fully rendered prompt) | `skeleton` to locate the LLM run, or `context-at` for the step |
+| "What does a prompt hub template say (per env tag)?" | `prompt show <name>` (`prompt pull <name>` first if not materialized locally) | `prompt list` / `prompt diff` for versions |
 | "Why did it read this file 4 times?" | `tool-metrics` (check repeated calls & process/friction signals) | `target-timeline <trace_id> <file> --compact` (overview), then `run-detail` on each touch |
 | "Did compaction drop the user's constraint?" | `context-metrics` (look for a drop; `--format json` for lifecycle drops and churn within the same node) | `run-detail` on the LLM steps before/after the drop |
 | "What supports the final claim?" | `narrative` (find the claim) | `run-detail --outputs-only` on the last LLM run |
