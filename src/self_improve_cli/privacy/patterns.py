@@ -92,6 +92,25 @@ PRESIDIO_ENTITY_MAP: dict[str, str] = {
 _HYPHEN_TRANSLATION = str.maketrans({chr(cp): "-" for cp in (*range(0x2010, 0x2016), 0x2212)})
 
 
+# Machine identifiers (UUIDs, hex digests and completion IDs) whose digit runs
+# match the numeric PII patterns (a UUID group "0612345678-.." reads as a
+# phone number). Matched as substrings, since IDs are often embedded in a
+# larger value ("node:<uuid>"). An undashed hex run must hold at least one
+# letter, so a bare digit sequence never counts as an ID.
+_ID_TOKEN = re.compile(
+    r"(?<![0-9A-Za-z])"
+    r"(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+    r"|(?=[0-9a-f]*[a-f])[0-9a-f]{16,})"
+    r"(?![0-9A-Za-z])",
+    re.IGNORECASE,
+)
+
+
+def id_token_spans(text: str) -> list[tuple[int, int]]:
+    """Return (start, end) spans of UUID / long-hex identifiers in text."""
+    return [(m.start(), m.end()) for m in _ID_TOKEN.finditer(text)]
+
+
 def regex_scan(text: str) -> list[tuple[str, str, int, int]]:
     """Detect PII and secrets with regex patterns. Always available."""
     results: list[tuple[str, str, int, int]] = []

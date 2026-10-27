@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from self_improve_cli.domain import Message, Run
-from self_improve_cli.privacy.patterns import SECRET_TYPES, regex_scan
+from self_improve_cli.privacy.patterns import SECRET_TYPES, id_token_spans, regex_scan
 from self_improve_cli.privacy.placeholders import PlaceholderMap
 from self_improve_cli.privacy.presidio_adapter import _presidio_failed, try_presidio
 from self_improve_cli.privacy.report import SanitizationReport
@@ -75,6 +75,16 @@ def _redact_string(
         _, _, s, e = r
         if not any(s < re_end and e > re_start for _, _, re_start, re_end in matches):
             matches.append(r)
+
+    # 4. Drop PII matches lying entirely inside a UUID / hex identifier: a
+    # digit run of an ID is not a phone or NIR. Secrets are never dropped.
+    id_spans = id_token_spans(text)
+    if id_spans:
+        matches = [
+            m
+            for m in matches
+            if m[0] in SECRET_TYPES or not any(s <= m[2] and m[3] <= e for s, e in id_spans)
+        ]
 
     if not matches:
         return text

@@ -71,6 +71,45 @@ def test_phone_regex_does_not_match_financial_amounts():
     assert report.entity_counts.get("PHONE", 0) == 0
 
 
+# Synthetic IDs whose digit runs match the numeric PII patterns on their own.
+_PHONE_SHAPED_UUID = "06123456-78ab-4c2d-9e0f-0123456789ab"
+_NIR_SHAPED_HEX = "abcdef1850578006084cdef01234abcd"
+
+
+def test_numeric_pii_patterns_match_inside_ids_on_their_own():
+    """Guard: the synthetic IDs below really trigger the raw patterns."""
+    from self_improve_cli.privacy.patterns import regex_scan
+
+    assert any(t == "PHONE" for t, *_ in regex_scan(_PHONE_SHAPED_UUID))
+    assert any(t == "FR_NIR" for t, *_ in regex_scan(_NIR_SHAPED_HEX))
+
+
+@pytest.mark.parametrize("backend", _BACKENDS)
+def test_ids_are_not_redacted_as_numeric_pii(backend):
+    """UUID and hex identifiers, bare or embedded in a value, stay intact."""
+    _skip_if_presidio_unavailable(backend)
+    texts = (
+        _PHONE_SHAPED_UUID,
+        f"loadNode:{_PHONE_SHAPED_UUID}",
+        f"cmpl-{_NIR_SHAPED_HEX}",
+    )
+    anonymized, report = anonymize_trace(_trace_with_text(*texts), backend=backend)
+    for i, text in enumerate(texts, start=1):
+        assert anonymized.runs[i].inputs == {"content": text}
+    assert report.entity_counts.get("PHONE", 0) == 0
+    assert report.entity_counts.get("FR_NIR", 0) == 0
+
+
+def test_phone_next_to_an_id_is_still_redacted():
+    """The ID exclusion covers the ID span only, not its neighbours."""
+    text = f"run {_PHONE_SHAPED_UUID} caller 06 12 34 56 78 and 0612345678"
+    anonymized, _ = anonymize_trace(_trace_with_text(text), backend="regex")
+    content = anonymized.runs[1].inputs["content"]
+    assert _PHONE_SHAPED_UUID in content
+    assert "06 12 34 56 78" not in content
+    assert "0612345678" not in content
+
+
 def test_phone_regex_matches_us_format():
     """US-style 10-digit numbers with separators should still be detected."""
     trace = _trace_with_text("Call me at 555-123-4567.")

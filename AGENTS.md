@@ -292,6 +292,9 @@ card). Regex secret matches take priority over Presidio when they overlap.
 The regex PII set also covers French phone numbers, French social security
 numbers (NIR), and birth dates in an explicit `ne/nee le <date>` context only,
 because a bare date pattern would destroy financial text.
+A PII match lying entirely inside a UUID or a 16+ character hex identifier
+(with at least one letter) is discarded, so run and completion IDs are not
+masked as phone or NIR numbers. Secret matches are never discarded.
 
 The `anonymizer_backend` field in fetch JSON output records which backend was
 used. The `sanitization_report.recognizer_version` field records which detector
@@ -343,7 +346,7 @@ When the target agent uses skills (loaded via `read_file` on `SKILL.md` files),
 these commands measure trigger accuracy and cost:
 
 - `skill-metrics <trace_id>` — detects skill invocations and estimates marginal token/latency cost.
-- `compare <trace_a> <trace_b>` — diffs two traces (tokens, latency, tool calls, skills). Useful for A/B testing skills on vs off.
+- `compare <trace_a> <trace_b>` — diffs two traces (tokens, latency, tool calls, skills). Useful for A/B testing skills on vs off. When some LLM runs recorded no usage (a root run often records none), the token total is the sum over the runs that did, marked `~...*` as an approximate lower bound; JSON keeps the exact `token_delta` null and adds `tokens_approximate`, `approx_token_delta`, and `unrecorded_llm_calls_a/b`. `gate` never uses this partial sum.
 - `skill-check <trace_id> --expected <skill_name|none>` — scriptable trigger verification. Exit 0 = match, exit 1 = mismatch (false positive or wrong skill).
 
 Skill detection is heuristic: a tool call (`read_file` or `grep`) whose target
