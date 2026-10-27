@@ -70,7 +70,7 @@ def _cmd_skill_metrics(args: argparse.Namespace) -> int:
 
 def _cmd_compare(args: argparse.Namespace) -> int:
     """Compare two traces: tokens, latency, tool calls, and skill invocations."""
-    from self_improve_cli.metrics.efficiency import efficiency_summary
+    from self_improve_cli.metrics.efficiency import EfficiencySummary, efficiency_summary
     from self_improve_cli.metrics.skill_metrics import skill_invocations
 
     store = _get_store(args)
@@ -81,6 +81,14 @@ def _cmd_compare(args: argparse.Namespace) -> int:
     eff_b = efficiency_summary(trace_b.runs)
     tokens_a, tokens_b = eff_a.tokens, eff_b.tokens
     token_delta = tokens_b - tokens_a if tokens_a is not None and tokens_b is not None else None
+    # Approximate fallback (lower bound) when some LLM runs recorded usage and
+    # others did not; the exact `token_delta` stays None in that case.
+    shown_a = tokens_a if tokens_a is not None else eff_a.recorded_tokens
+    shown_b = tokens_b if tokens_b is not None else eff_b.recorded_tokens
+    tokens_approx = eff_a.tokens_approximate or eff_b.tokens_approximate
+    approx_delta = (
+        shown_b - shown_a if tokens_approx and shown_a is not None and shown_b is not None else None
+    )
     llm_a, llm_b = eff_a.llm_calls, eff_b.llm_calls
     latency_a, latency_b = eff_a.latency_ms, eff_b.latency_ms
     tools_a, tools_b = eff_a.tool_calls, eff_b.tool_calls
@@ -95,6 +103,12 @@ def _cmd_compare(args: argparse.Namespace) -> int:
             "trace_a": args.trace_a,
             "trace_b": args.trace_b,
             "token_delta": token_delta,
+            "tokens_a": shown_a,
+            "tokens_b": shown_b,
+            "tokens_approximate": tokens_approx,
+            "approx_token_delta": approx_delta,
+            "unrecorded_llm_calls_a": eff_a.unrecorded_llm_calls,
+            "unrecorded_llm_calls_b": eff_b.unrecorded_llm_calls,
             "latency_delta_ms": (latency_b - latency_a) if latency_a and latency_b else None,
             "llm_calls_a": llm_a,
             "llm_calls_b": llm_b,
@@ -106,17 +120,24 @@ def _cmd_compare(args: argparse.Namespace) -> int:
         print(json.dumps(result, indent=2, default=str, ensure_ascii=False))
     else:
 
-        def _tok(n: int | None) -> str:
-            return "n/a" if n is None else f"{n:,}"
+        def _tok(eff: EfficiencySummary) -> str:
+            if eff.tokens is not None:
+                return f"{eff.tokens:,}"
+            return "n/a" if eff.recorded_tokens is None else f"~{eff.recorded_tokens:,}*"
+
+        if token_delta is not None:
+            delta_cell = f"{token_delta:+,}"
+        elif approx_delta is not None:
+            delta_cell = f"~{approx_delta:+,}*"
+        else:
+            delta_cell = "n/a"
 
         lines = [
             "# Trace comparison",
             "",
             f"| Metric | Trace A ({args.trace_a[:8]}) | Trace B ({args.trace_b[:8]}) | Delta |",
             "| --- | ---: | ---: | ---: |",
-            f"| Total tokens | {_tok(tokens_a)} | {_tok(tokens_b)} | "
-            + ("n/a" if token_delta is None else f"{token_delta:+,}")
-            + " |",
+            f"| Total tokens | {_tok(eff_a)} | {_tok(eff_b)} | {delta_cell} |",
             f"| LLM calls | {llm_a} | {llm_b} | {llm_b - llm_a:+d} |",
             f"| Latency | {latency_a}ms | {latency_b}ms | "
             + (f"{(latency_b - latency_a):+d}ms" if latency_a and latency_b else "N/A")
@@ -126,6 +147,13 @@ def _cmd_compare(args: argparse.Namespace) -> int:
             f"- A: {', '.join(skill_names_a) or '(none)'}",
             f"- B: {', '.join(skill_names_b) or '(none)'}",
         ]
+        if tokens_approx:
+            lines += [
+                "",
+                "* Approximate (lower bound): sum over the LLM runs that recorded usage; "
+                f"unrecorded LLM calls: A={eff_a.unrecorded_llm_calls}, "
+                f"B={eff_b.unrecorded_llm_calls}.",
+            ]
         print("\n".join(lines))
     return EXIT_OK
 

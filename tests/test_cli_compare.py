@@ -171,6 +171,39 @@ def test_compare_command_missing_token_usage(two_traces, capsys):
     assert main([*args, "--format", "markdown"]) == 0
     out = capsys.readouterr().out
     assert "| Total tokens | 3,510 | n/a | n/a |" in out
+    assert "Approximate" not in out
+
+
+def test_compare_command_partial_token_usage_is_labeled_approximate(two_traces, capsys):
+    """An LLM run without usage yields a labeled lower bound, not n/a or an exact total."""
+    trace_a, _, data_dir = two_traces
+    partial = Trace(
+        trace_id="trace-partial",
+        runs=[
+            make_root(trace_id="trace-partial"),
+            make_run("1", run_type=RunType.LLM, total_tokens=4000, trace_id="trace-partial"),
+            make_run("2", run_type=RunType.LLM, trace_id="trace-partial"),
+        ],
+        sanitized=True,
+        sanitization_report={"entity_counts": {}, "complete": True},
+        source="test",
+    )
+    TraceStore(data_root=data_dir).save_sanitized(partial)
+    args = ["compare", trace_a, "trace-partial", "--data-dir", str(data_dir)]
+
+    assert main([*args, "--format", "json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["token_delta"] is None
+    assert data["tokens_b"] == 4000
+    assert data["tokens_approximate"] is True
+    assert data["approx_token_delta"] == 4000 - data["tokens_a"]
+    assert (data["unrecorded_llm_calls_a"], data["unrecorded_llm_calls_b"]) == (0, 1)
+
+    assert main([*args, "--format", "markdown"]) == 0
+    out = capsys.readouterr().out
+    assert "| Total tokens | 3,510 | ~4,000* | ~+490* |" in out
+    assert "* Approximate (lower bound)" in out
+    assert "A=0, B=1" in out
 
 
 # --- skill-check command ----------------------------------------------------

@@ -177,6 +177,25 @@ def test_efficiency_summary_tokens_none_when_any_llm_run_lacks_usage():
     assert efficiency_summary([root, llm("1", None)]).tokens is None
 
 
+def test_efficiency_summary_recorded_tokens_is_an_approximate_partial_sum():
+    def llm(idx: str, total: int | None):
+        return make_run(idx, run_type=RunType.LLM, total_tokens=total, trace_id="t")
+
+    root = make_root(trace_id="t")  # root records no total, as in many sources
+    exact = efficiency_summary([root, llm("1", 100), llm("2", 50)])
+    assert (exact.recorded_tokens, exact.unrecorded_llm_calls) == (150, 0)
+    assert not exact.tokens_approximate
+
+    partial = efficiency_summary([root, llm("1", 100), llm("2", None), llm("3", 40)])
+    assert partial.tokens is None
+    assert (partial.recorded_tokens, partial.unrecorded_llm_calls) == (140, 1)
+    assert partial.tokens_approximate
+
+    none = efficiency_summary([root, llm("1", None)])
+    assert (none.recorded_tokens, none.unrecorded_llm_calls) == (None, 1)
+    assert not none.tokens_approximate
+
+
 def test_gate_json_shape(store, tmp_path, capsys):
     _save(store, "after", [1000, 2000], tools=3)
     _assess(store, "before", OutcomeStatus.PARTIAL)

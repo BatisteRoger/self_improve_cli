@@ -17,7 +17,7 @@ Per-command status against the six contract criteria defined in `AGENTS.md` § E
 | `context-metrics` | ✓ | ✓ lifecycle section only above re-paid threshold or with duplicates, top 3 non-system items + top 3 duplicates; churn JSON-only | step indices + `tool_call_id`s | ✓ approximate labels; drops/churn scoped to the same node (inferred) | n/a | ✓ structured |
 | `skill-metrics` | ✓ | ✓ | step indices | ✓ approximate labels | n/a | ✓ structured |
 | `tools` | ✓ | ✓ `--detail` | tool names | ✓ | n/a | markdown-wrapped (tabular) |
-| `compare` | ✓ | ✓ | trace IDs | ✓ | n/a | ✓ structured |
+| `compare` | ✓ | ✓ | trace IDs | ✓ partial token usage shown as a labeled lower bound | n/a | ✓ structured |
 | `gate` | ✓ before/after order | ✓ verdict + per-axis reasons | `diff`/`compare`/`assess` next commands | ✓ missing/unknown outcome = inconclusive; efficiency labeled approximate | ✓ same ID, unknown trace | ✓ structured; exit 0/1/2 mirrors verdict; `reason_code` |
 | `gate --baseline/--candidate` | ✓ baseline/candidate order, same side forms | ✓ 3x3 table, flagged examples capped at 10 in Markdown, full list in JSON | example IDs + trace pointers with `diff`/`narrative` next commands | ✓ noise floor and efficiency labeled approximate; unknown/k=1 never judged; conditions `unavailable` stated | ✓ unknown experiment suggests `fetch --experiment`, id-file line errors, usage errors | ✓ structured; `reason_code` |
 | `skill-check` | ✓ | ✓ | n/a | ✓ | ✓ suggests skill-metrics | ✓ structured |
