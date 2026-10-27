@@ -12,6 +12,23 @@ import re
 
 _REGEX_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("EMAIL", re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")),
+    # French social security number (NIR/INSEE): sex, year, month, department
+    # (2A/2B for Corsica), commune, order, optional 2-digit key. Listed before
+    # PHONE so a spaced NIR is never split into a phone match.
+    (
+        "FR_NIR",
+        re.compile(
+            r"(?<!\d)[12]\s?\d{2}\s?\d{2}\s?(?:\d{2}|2[AB])\s?\d{3}\s?\d{3}(?:\s?\d{2})?(?!\d)"
+        ),
+    ),
+    # French national phone number: 0X XX XX XX XX with optional separators.
+    ("PHONE", re.compile(r"(?<!\d)0[1-9](?:[\s.-]?\d{2}){4}(?!\d)")),
+    # Birth date only in an explicit "ne/nee le <date>" context: a bare date
+    # pattern would destroy financial and scheduling text.
+    (
+        "BIRTH_DATE",
+        re.compile(r"\bnée?\s+le\s+\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b", re.IGNORECASE),
+    ),
     (
         "PHONE",
         # International format (+CC ...) or US-style 10 digits with separators.

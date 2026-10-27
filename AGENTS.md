@@ -79,7 +79,7 @@ Dependency direction: `source -> canonical model -> privacy/storage -> determini
 
 - `domain/` — canonical trace, run, message, and artifact types; schema versioning and validation. `trace.py` (model), `records.py` (analyst assessments + findings), `experiment.py` (outcome policy + experiment listing).
 - `sources/` — a `TraceSource` protocol plus the initial LangSmith adapter. SDK-specific objects stop at this boundary.
-- `privacy/` — anonymization policy, recognizers, placeholder mapping, and sanitization reports. Internally split into `patterns` (regex), `presidio_adapter` (NLP), `placeholders` (stable mapping), `report` (summary), and `redact` (recursive application + backend merge).
+- `privacy/` — anonymization policy, recognizers, placeholder mapping, and sanitization reports. Internally split into `patterns` (regex), `presidio_adapter` (NLP), `placeholders` (stable mapping), `report` (summary), `redact` (recursive application + backend merge), and `structural` (mapping-table replacement + key dropping).
 - `storage/` — safe local artifact layout, atomic writes, metadata, and raw-retention controls. `base.py` (paths + serialization) plus per-area mixins: `traces`, `records`, `experiments`, `ter`, `prompts`, `ati`; `TraceStore` composes them.
 - `representations/` — deterministic L0/L1/L2/L3 TER builders over canonical sanitized data. One module per view (`skeleton`, `narrative`, `run_detail`, `context_at`, `navigation`, `trace_diff`, `tools`) over `common` helpers; `ter.py` writes all derived files. Public names re-exported from `__init__.py`.
 - `metrics/` — tool, context, and skill metrics, each labeled with its approximation and assumptions.
@@ -278,17 +278,46 @@ Control via CLI flag or env var (CLI flag overrides env var):
 
 ```bash
 self-improve fetch <trace_id> --anonymizer regex
-SELFIIMPROVE_ANONYMIZER=regex self-improve fetch <trace_id>
+SELF_IMPROVE_ANONYMIZER=regex self-improve fetch <trace_id>
 ```
+
+The misspelled legacy name `SELFIIMPROVE_ANONYMIZER` is still read, so
+existing `.env` files keep working; `SELF_IMPROVE_ANONYMIZER` wins when both
+are set. The same rule applies to the two settings below.
 
 Secrets (API keys, JWTs, bearer tokens, private keys, connection strings,
 password assignments) are always detected by regex patterns regardless of
 backend. The backend only affects PII detection (email, phone, IBAN, credit
 card). Regex secret matches take priority over Presidio when they overlap.
+The regex PII set also covers French phone numbers, French social security
+numbers (NIR), and birth dates in an explicit `ne/nee le <date>` context only,
+because a bare date pattern would destroy financial text.
 
 The `anonymizer_backend` field in fetch JSON output records which backend was
 used. The `sanitization_report.recognizer_version` field records which detector
 was active.
+
+### Structural redaction
+
+Pattern detection cannot know values that only the target agent knows. Two
+optional settings, applied by `fetch` before pattern detection, cover that
+(`privacy/structural.py`):
+
+- `SELF_IMPROVE_VALUE_MAP="<table_key>:<value_field>:<token_field>"`
+  (comma-separated for several tables). Some target agents pseudonymize their
+  own data and record the table in the trace: a list of objects under
+  `<table_key>`, at any depth. Every exact occurrence of a `<value_field>`
+  string anywhere in the trace (root input, runs before the pseudonymization
+  step) is replaced by its `<token_field>`, so the target's tag vocabulary
+  stays consistent. Longer values are replaced first. `<table_key>` is then
+  dropped.
+- `SELF_IMPROVE_DROP_KEYS="key_a,key_b"`: every subtree under one of these
+  keys, at any depth, becomes a `<dropped:N chars>` marker, so sizes stay
+  visible.
+
+A malformed `VALUE_MAP` spec makes `fetch` fail before any network call. The
+sanitization report counts replacements as `MAPPED_VALUE` and dropped
+subtrees as `DROPPED_KEY`.
 
 ### Project and workspace configuration
 

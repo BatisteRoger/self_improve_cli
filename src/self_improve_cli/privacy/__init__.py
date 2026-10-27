@@ -31,6 +31,7 @@ Internal modules:
 - ``placeholders``: stable, trace-local placeholder mapping.
 - ``report``: non-sensitive sanitization summary.
 - ``redact``: recursive redaction logic and backend merge.
+- ``structural``: mapping-table value replacement and key dropping.
 """
 
 from __future__ import annotations
@@ -42,25 +43,44 @@ from self_improve_cli.privacy.placeholders import PlaceholderMap
 from self_improve_cli.privacy.presidio_adapter import is_presidio_available
 from self_improve_cli.privacy.redact import _redact_run
 from self_improve_cli.privacy.report import SanitizationReport
+from self_improve_cli.privacy.structural import (
+    ValueMapSpec,
+    collect_value_map,
+    parse_drop_keys,
+    parse_value_maps,
+    replace_values,
+)
+from self_improve_cli.privacy.structural import drop_keys as _drop_keys
 
 AnonymizerBackend = Literal["auto", "presidio", "regex"]
 
 __all__ = [
     "AnonymizerBackend",
     "SanitizationReport",
+    "ValueMapSpec",
     "anonymize_trace",
     "is_presidio_available",
+    "parse_drop_keys",
+    "parse_value_maps",
 ]
 
 
 def anonymize_trace(
-    trace: Trace, backend: AnonymizerBackend = "auto"
+    trace: Trace,
+    backend: AnonymizerBackend = "auto",
+    drop_keys: frozenset[str] = frozenset(),
+    value_maps: tuple[ValueMapSpec, ...] = (),
 ) -> tuple[Trace, SanitizationReport]:
     """Anonymize a Trace in place and return (trace, report).
 
     Replaces PII and secrets with stable, trace-local placeholders. The
     original-to-placeholder mapping is kept in memory only and never
     persisted by default.
+
+    Before pattern detection, two structural passes run (see ``structural``):
+    values listed in the ``value_maps`` tables are replaced by their tokens
+    everywhere in the trace, then every ``drop_keys`` key and every table key
+    is replaced with a ``<dropped:N chars>`` marker.
 
     Returns a SanitizationReport with counts by entity type (no matched
     values). The ``recognizer_version`` field indicates which detector was
@@ -71,6 +91,13 @@ def anonymize_trace(
     """
     pmap = PlaceholderMap()
     report = SanitizationReport()
+
+    mapping = collect_value_map(trace.runs, value_maps)
+    if replaced := replace_values(trace.runs, mapping):
+        report.entity_counts["MAPPED_VALUE"] = replaced
+    keys = drop_keys | {spec.table_key for spec in value_maps}
+    if dropped := _drop_keys(trace.runs, keys):
+        report.entity_counts["DROPPED_KEY"] = dropped
 
     for run in trace.runs:
         _redact_run(run, pmap, report, backend)
