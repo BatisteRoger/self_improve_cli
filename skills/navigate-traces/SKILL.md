@@ -113,6 +113,13 @@ agent.
   agent's context when the narrative or skeleton will do.
 - **Metrics are facts, not conclusions.** Tool, context, and skill
   metrics are deterministic. Interpreting them is the analyst's job.
+- **Multi-turn conversations: drill the curve, not the chronology.** Lay
+  out the per-turn token and latency curve first (one value per turn
+  trace; `list` gives tokens), then drill into the turns that carry the
+  signal — the peak, the drop (a compaction boundary), and the last turn —
+  before reading chronologically. The CLI is trace-scoped for now: a
+  conversation is several traces, one per turn, so fetch each turn you
+  drill into (a `fetch --thread` capability is planned).
 - **Cite run IDs.** Every finding should be traceable to a specific run.
 - **Check the sanitization report.** If `complete: false` or
   `recognizer_version: regex-fallback`, anonymization may be weaker than
