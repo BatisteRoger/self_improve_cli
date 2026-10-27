@@ -11,6 +11,7 @@ from self_improve_cli.cli.doctor import (
     run_doctor,
 )
 from self_improve_cli.cli.main import main
+from self_improve_cli.privacy.report import POLICY_VERSION
 
 # ---------------------------------------------------------------------------
 # Unit tests for individual checks
@@ -103,6 +104,7 @@ def test_report_has_all_expected_check_ids():
         "env_api_key",
         "env_project",
         "wheel_artifacts",
+        "trace_policy",
         "dev_ruff",
         "dev_pyright",
         "dev_pytest",
@@ -129,7 +131,7 @@ def test_report_to_dict_structure():
     d = report.to_dict()
     assert d["profile"] == "fetch"
     assert d["offline"] is True
-    assert len(d["checks"]) == 12
+    assert len(d["checks"]) == 13
     for check_dict in d["checks"]:
         assert "id" in check_dict
         assert "status" in check_dict
@@ -213,3 +215,53 @@ def test_doctor_command_invalid_profile_rejected(capsys):
     with pytest.raises(SystemExit) as exc_info:
         main(["doctor", "--profile", "invalid"])
     assert exc_info.value.code == 2
+
+
+# ---------------------------------------------------------------------------
+# trace_policy: stored traces vs current privacy policy version
+# ---------------------------------------------------------------------------
+
+
+def _store_trace(data_root, trace_id, report):
+    trace_dir = data_root / "traces" / trace_id
+    trace_dir.mkdir(parents=True)
+    payload = {"trace_id": trace_id, "runs": [], "secret_field": "SENSITIVE-VALUE"}
+    if report is not None:
+        payload["sanitization_report"] = report
+    (trace_dir / "sanitized.json").write_text(json.dumps(payload), encoding="utf-8")
+
+
+def _trace_policy(report):
+    return next(c for c in report.checks if c.id == "trace_policy")
+
+
+def test_trace_policy_skips_without_stored_traces(tmp_path):
+    check = _trace_policy(run_doctor(data_root=tmp_path))
+    assert check.status == "skip"
+
+
+def test_trace_policy_passes_when_all_traces_current(tmp_path):
+    _store_trace(tmp_path, "t-current", {"policy_version": str(POLICY_VERSION)})
+    check = _trace_policy(run_doctor(data_root=tmp_path))
+    assert check.status == "pass"
+
+
+def test_trace_policy_flags_legacy_and_unmarked_traces(tmp_path):
+    _store_trace(tmp_path, "t-current", {"policy_version": str(POLICY_VERSION)})
+    _store_trace(tmp_path, "t-old", {"policy_version": str(POLICY_VERSION - 1)})
+    _store_trace(tmp_path, "t-unmarked", None)
+    check = _trace_policy(run_doctor(data_root=tmp_path))
+    assert check.status == "warn"
+    assert "2 of 3" in check.summary
+    assert "t-old" in check.summary and "t-unmarked" in check.summary
+    assert "t-current" not in check.summary
+    assert "SENSITIVE-VALUE" not in check.summary
+    assert check.remedy is not None
+
+
+def test_doctor_command_data_dir_flag(tmp_path, capsys):
+    _store_trace(tmp_path, "t-unmarked", None)
+    main(["doctor", "--format", "json", "--data-dir", str(tmp_path)])
+    data = json.loads(capsys.readouterr().out)
+    check = next(c for c in data["checks"] if c["id"] == "trace_policy")
+    assert check["status"] == "warn"

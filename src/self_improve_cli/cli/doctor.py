@@ -25,18 +25,22 @@ What is NOT checked:
   network call and a paid API).
 - Whether .venv dependencies are up-to-date (that would require an install).
 - Freshness of generated artifacts (skills/, py.typed are checked for
-  existence only).
+  existence only). Stored traces are checked for their privacy policy
+  version only (trace_policy), not re-scanned for sensitive content.
 - Docker, databases, or other services (this project has none).
 """
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
+
+from self_improve_cli.privacy.report import POLICY_VERSION
 
 CheckStatus = Literal["pass", "warn", "fail", "skip"]
 
@@ -262,6 +266,49 @@ def _check_wheel_artifacts() -> Check:
     )
 
 
+def _stored_policy_version(sanitized_path: Path) -> int | None:
+    """Policy version recorded in a stored trace, or None if absent/unreadable."""
+    try:
+        data = json.loads(sanitized_path.read_text(encoding="utf-8"))
+        return int(data["sanitization_report"]["policy_version"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def _check_trace_policy(data_root: Path) -> Check:
+    """Flag stored traces sanitized under an older privacy policy.
+
+    A trace without a readable policy_version counts as legacy. Only trace
+    IDs (directory names) and counts are reported, never trace content.
+    """
+    traces_dir = data_root / "traces"
+    paths = sorted(traces_dir.glob("*/sanitized.json")) if traces_dir.is_dir() else []
+    if not paths:
+        return Check(
+            id="trace_policy",
+            status="skip",
+            summary=f"No stored traces under {traces_dir}",
+        )
+    legacy = [p.parent.name for p in paths if (_stored_policy_version(p) or 0) < POLICY_VERSION]
+    if not legacy:
+        return Check(
+            id="trace_policy",
+            status="pass",
+            summary=f"All {len(paths)} stored traces use privacy policy v{POLICY_VERSION}",
+        )
+    shown = ", ".join(legacy[:5]) + (", ..." if len(legacy) > 5 else "")
+    return Check(
+        id="trace_policy",
+        status="warn",
+        summary=(
+            f"{len(legacy)} of {len(paths)} stored traces predate privacy policy "
+            f"v{POLICY_VERSION}: {shown}"
+        ),
+        remedy="Re-fetch the traces still needed, then delete the other legacy "
+        f"trace directories under {traces_dir}.",
+    )
+
+
 def _check_dev_ruff() -> Check:
     if shutil.which("ruff"):
         return Check(id="dev_ruff", status="pass", summary="ruff found on PATH")
@@ -303,7 +350,9 @@ def _check_dev_pytest() -> Check:
 # ---------------------------------------------------------------------------
 
 
-def run_doctor(profile: str = "default", offline: bool = False) -> DoctorReport:
+def run_doctor(
+    profile: str = "default", offline: bool = False, data_root: Path | None = None
+) -> DoctorReport:
     """Run all doctor checks for the given profile.
 
     Read-only: no installs, no network, no mutations.
@@ -320,6 +369,7 @@ def run_doctor(profile: str = "default", offline: bool = False) -> DoctorReport:
     report.checks.append(_check_env_api_key(profile))
     report.checks.append(_check_env_project())
     report.checks.append(_check_wheel_artifacts())
+    report.checks.append(_check_trace_policy(data_root or Path("data")))
 
     # Dev tooling (always run, warn-only)
     report.checks.append(_check_dev_ruff())

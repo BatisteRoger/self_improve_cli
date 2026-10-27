@@ -5,6 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+# Version of the sanitization policy applied at fetch time, stored in each
+# trace's sanitization report. Bump it whenever sanitization gets stricter:
+# `self-improve doctor` then flags traces stored under an older version.
+POLICY_VERSION = 1
+
 
 @dataclass
 class SanitizationReport:
@@ -15,7 +20,7 @@ class SanitizationReport:
 
     entity_counts: dict[str, int] = field(default_factory=dict)
     recognizer_version: str = "regex-fallback"
-    policy_version: str = "1"
+    policy_version: str = str(POLICY_VERSION)
     complete: bool = True
     errors: list[str] = field(default_factory=list)
 

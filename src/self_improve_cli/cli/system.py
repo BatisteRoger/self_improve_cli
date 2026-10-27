@@ -168,7 +168,8 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     """Run a read-only local setup diagnostic."""
     from self_improve_cli.cli.doctor import format_report_markdown, run_doctor
 
-    report = run_doctor(profile=args.profile, offline=args.offline)
+    data_root = Path(args.data_dir) if args.data_dir else None
+    report = run_doctor(profile=args.profile, offline=args.offline, data_root=data_root)
     if args.format == "json":
         print(json.dumps(report.to_dict(), indent=2, ensure_ascii=False))
     else:
@@ -210,5 +211,10 @@ def register(sub: argparse._SubParsersAction) -> None:
         choices=["markdown", "json"],
         default="markdown",
         help="Output format (default: markdown)",
+    )
+    p.add_argument(
+        "--data-dir",
+        default=None,
+        help="Local data root scanned by the trace_policy check (default: ./data)",
     )
     p.set_defaults(func=_cmd_doctor)

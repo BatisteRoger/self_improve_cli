@@ -376,6 +376,8 @@ Profiles:
 - `fetch`: escalates `langsmith_extra` and `env_api_key` to `fail`, since the
   `fetch` command cannot work without them.
 
+`trace_policy` reads the `policy_version` that `fetch` records in each stored trace's sanitization report (`privacy/report.py::POLICY_VERSION`) and warns about traces stored under an older version, or with no version at all. It reports trace IDs and counts only. Bump `POLICY_VERSION` in the same change that tightens sanitization; doctor then lists the traces to re-fetch or delete. `--data-dir` selects the scanned data root (default `./data`).
+
 What is **not** checked: API key validity (would require a network call),
 dependency freshness (would require an install), artifact freshness, Docker,
 databases. See `cli/doctor.py` for the full check list and scope honesty notes.
