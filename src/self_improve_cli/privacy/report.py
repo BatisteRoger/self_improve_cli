@@ -8,7 +8,8 @@ from typing import Any
 # Version of the sanitization policy applied at fetch time, stored in each
 # trace's sanitization report. Bump it whenever sanitization gets stricter:
 # `self-improve doctor` then flags traces stored under an older version.
-POLICY_VERSION = 1
+#   v2: structural redaction (value map, drop keys) and French PII patterns.
+POLICY_VERSION = 2
 
 
 @dataclass
