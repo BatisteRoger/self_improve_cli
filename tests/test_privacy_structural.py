@@ -93,6 +93,25 @@ def test_mapped_values_replaced_in_any_letter_case():
     assert trace.runs[0].inputs["q"] == "<NAME_1>, <NAME_1>, <CITY_1>"
 
 
+def test_report_records_hardening_fingerprint_without_names():
+    trace, report = anonymize_trace(
+        _pseudonymized_trace(),
+        backend="regex",
+        drop_keys=frozenset({"raw_turns"}),
+        value_maps=(_SPEC,),
+    )
+    hardening = trace.sanitization_report["hardening"]  # type: ignore[index]
+    assert hardening == report.to_dict()["hardening"]
+    assert {k: hardening[k] for k in ("engine", "drop_keys", "value_maps")} == {
+        "engine": "regex",
+        "drop_keys": 1,
+        "value_maps": 1,
+    }
+    assert len(hardening["hash"]) == 12
+    assert "raw_turns" not in json.dumps(hardening)
+    assert "pii_table" not in json.dumps(hardening)
+
+
 def test_drop_keys_replaces_subtree_with_size_marker_at_any_depth():
     secret = {"text": "raw content", "n": 1}
     root = make_root()

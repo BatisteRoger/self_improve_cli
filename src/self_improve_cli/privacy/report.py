@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -10,6 +12,27 @@ from typing import Any
 # `self-improve doctor` then flags traces stored under an older version.
 #   v2: structural redaction (value map, drop keys) and French PII patterns.
 POLICY_VERSION = 2
+
+
+def hardening_fingerprint(
+    engine: str, drop_keys: Iterable[str], value_maps: Iterable[str]
+) -> dict[str, Any]:
+    """Summarize the hardening configuration applied to a trace.
+
+    ``value_maps`` are the ``<table_key>:<value_field>:<token_field>`` specs.
+    Only the engine and the counts are stored in clear. The configured key
+    names enter a short hash, so a renamed key changes the fingerprint
+    without the names being written to disk. No trace value is involved.
+    """
+    keys = sorted(set(drop_keys))
+    maps = sorted(set(value_maps))
+    material = "\n".join([engine, *keys, "--", *maps])
+    return {
+        "engine": engine,
+        "drop_keys": len(keys),
+        "value_maps": len(maps),
+        "hash": hashlib.sha256(material.encode("utf-8")).hexdigest()[:12],
+    }
 
 
 @dataclass
@@ -24,6 +47,7 @@ class SanitizationReport:
     policy_version: str = str(POLICY_VERSION)
     complete: bool = True
     errors: list[str] = field(default_factory=list)
+    hardening: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -32,6 +56,7 @@ class SanitizationReport:
             "policy_version": self.policy_version,
             "complete": self.complete,
             "errors": list(self.errors),
+            "hardening": dict(self.hardening) if self.hardening is not None else None,
         }
 
     def add(self, entity_type: str) -> None:

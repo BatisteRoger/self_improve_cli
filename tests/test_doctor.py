@@ -11,6 +11,7 @@ from self_improve_cli.cli.doctor import (
     run_doctor,
 )
 from self_improve_cli.cli.main import main
+from self_improve_cli.privacy import ValueMapSpec, hardening_for
 from self_improve_cli.privacy.report import POLICY_VERSION
 
 # ---------------------------------------------------------------------------
@@ -106,6 +107,7 @@ def test_report_has_all_expected_check_ids():
         "wheel_artifacts",
         "env_hardening",
         "trace_policy",
+        "trace_hardening",
         "raw_copies",
         "dev_ruff",
         "dev_pyright",
@@ -133,7 +135,7 @@ def test_report_to_dict_structure():
     d = report.to_dict()
     assert d["profile"] == "fetch"
     assert d["offline"] is True
-    assert len(d["checks"]) == 15
+    assert len(d["checks"]) == 16
     for check_dict in d["checks"]:
         assert "id" in check_dict
         assert "status" in check_dict
@@ -293,6 +295,59 @@ def test_env_hardening_unset_warns(monkeypatch):
     check = _check(run_doctor(), "env_hardening")
     assert check.status == "warn"
     assert "hardening env vars not set" in check.summary
+
+
+def _clear_privacy_env(monkeypatch):
+    for name in ("ANONYMIZER", "DROP_KEYS", "VALUE_MAP"):
+        monkeypatch.delenv("SELF_IMPROVE_" + name, raising=False)
+        monkeypatch.delenv("SELFIIMPROVE_" + name, raising=False)
+
+
+def test_trace_hardening_matches_current_config(tmp_path, monkeypatch):
+    _clear_privacy_env(monkeypatch)
+    monkeypatch.setenv("SELF_IMPROVE_DROP_KEYS", "raw_blob")
+    current = hardening_for("auto", frozenset({"raw_blob"}), ())
+    _store_trace(tmp_path, "t-same", {"hardening": current})
+    assert _check(run_doctor(data_root=tmp_path), "trace_hardening").status == "pass"
+
+
+def test_trace_hardening_flags_other_and_missing_fingerprints(tmp_path, monkeypatch):
+    _clear_privacy_env(monkeypatch)
+    monkeypatch.setenv("SELF_IMPROVE_DROP_KEYS", "raw_blob")
+    _store_trace(
+        tmp_path, "t-same", {"hardening": hardening_for("auto", frozenset({"raw_blob"}), ())}
+    )
+    _store_trace(tmp_path, "t-other", {"hardening": hardening_for("auto", frozenset(), ())})
+    _store_trace(tmp_path, "t-none", {"policy_version": str(POLICY_VERSION)})
+    check = _check(run_doctor(data_root=tmp_path), "trace_hardening")
+    assert check.status == "warn"
+    assert "2 of 3" in check.summary
+    assert "t-other" in check.summary and "t-none" in check.summary
+    assert "t-same" not in check.summary
+    assert "raw_blob" not in check.summary
+    assert "SENSITIVE-VALUE" not in check.summary
+
+
+def test_trace_hardening_malformed_value_map_warns(tmp_path, monkeypatch):
+    _clear_privacy_env(monkeypatch)
+    monkeypatch.setenv("SELF_IMPROVE_VALUE_MAP", "only_one_part")
+    _store_trace(tmp_path, "t1", None)
+    check = _check(run_doctor(data_root=tmp_path), "trace_hardening")
+    assert check.status == "warn"
+    assert "malformed" in check.summary
+    assert "only_one_part" not in check.summary
+
+
+def test_hardening_fingerprint_hides_names_but_tracks_them():
+    a = hardening_for("regex", frozenset({"key_a", "key_b"}), (ValueMapSpec("t", "v", "k"),))
+    renamed = hardening_for("regex", frozenset({"key_a", "key_c"}), (ValueMapSpec("t", "v", "k"),))
+    assert a == {"engine": "regex", "drop_keys": 2, "value_maps": 1, "hash": a["hash"]}
+    assert "key_a" not in json.dumps(a)
+    assert renamed["hash"] != a["hash"]
+    assert (
+        hardening_for("auto", frozenset({"key_a", "key_b"}), (ValueMapSpec("t", "v", "k"),))["hash"]
+        != a["hash"]
+    )
 
 
 def test_doctor_command_data_dir_flag(tmp_path, capsys):

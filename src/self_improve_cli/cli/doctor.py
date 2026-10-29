@@ -32,6 +32,7 @@ What is NOT checked:
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import shutil
@@ -309,6 +310,63 @@ def _check_trace_policy(data_root: Path) -> Check:
     )
 
 
+def _stored_hardening_hash(sanitized_path: Path) -> str | None:
+    """Hardening fingerprint hash recorded in a stored trace, or None."""
+    try:
+        data = json.loads(sanitized_path.read_text(encoding="utf-8"))
+        return str(data["sanitization_report"]["hardening"]["hash"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def _check_trace_hardening(data_root: Path) -> Check:
+    """Flag stored traces whose hardening fingerprint differs from the current config.
+
+    The current config is what `fetch` would resolve from the environment
+    (anonymizer, drop keys, value maps), without a CLI flag. A trace with no
+    fingerprint counts as different. Only trace IDs and counts are reported.
+    """
+    # Lazy: discovery pulls the fetch pipeline, which doctor only needs here.
+    from self_improve_cli.cli.discovery import _resolve_anonymizer, _resolve_structural_policy
+    from self_improve_cli.privacy import hardening_for
+
+    traces_dir = data_root / "traces"
+    paths = sorted(traces_dir.glob("*/sanitized.json")) if traces_dir.is_dir() else []
+    if not paths:
+        return Check(
+            id="trace_hardening", status="skip", summary=f"No stored traces under {traces_dir}"
+        )
+    try:
+        drop_keys, value_maps = _resolve_structural_policy()
+    except ValueError:
+        return Check(
+            id="trace_hardening",
+            status="warn",
+            summary="SELF_IMPROVE_VALUE_MAP is malformed: current hardening config unknown",
+            remedy="Fix the spec: <table_key>:<value_field>:<token_field>, comma-separated.",
+        )
+    current = hardening_for(_resolve_anonymizer(argparse.Namespace()), drop_keys, value_maps)
+    differ = [p.parent.name for p in paths if _stored_hardening_hash(p) != current["hash"]]
+    if not differ:
+        return Check(
+            id="trace_hardening",
+            status="pass",
+            summary=f"All {len(paths)} stored traces match the current hardening config",
+        )
+    shown = ", ".join(differ[:5]) + (", ..." if len(differ) > 5 else "")
+    return Check(
+        id="trace_hardening",
+        status="warn",
+        summary=(
+            f"{len(differ)} of {len(paths)} stored traces were hardened with another "
+            f"config, or record none: {shown}"
+        ),
+        remedy="Re-fetch the traces still needed with the current env config, then "
+        f"delete the others under {traces_dir}. A trace fetched with an explicit "
+        "--anonymizer flag also differs when the flag and the env disagree.",
+    )
+
+
 def _check_raw_copies(data_root: Path) -> Check:
     """Flag raw.json files kept by `fetch --keep-raw` (content not sanitized)."""
     traces_dir = data_root / "traces"
@@ -423,6 +481,7 @@ def run_doctor(
     report.checks.append(_check_wheel_artifacts())
     report.checks.append(_check_env_hardening())
     report.checks.append(_check_trace_policy(data_root or Path("data")))
+    report.checks.append(_check_trace_hardening(data_root or Path("data")))
     report.checks.append(_check_raw_copies(data_root or Path("data")))
 
     # Dev tooling (always run, warn-only)
