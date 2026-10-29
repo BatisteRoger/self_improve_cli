@@ -135,6 +135,23 @@ def test_fr_phone_detected(phone):
     assert counts.get("PHONE") == 1
 
 
+@pytest.mark.parametrize(
+    ("value", "entity"),
+    [
+        ("+33 6 12 34 56 78", "PHONE"),
+        ("+33612345678", "PHONE"),
+        ("+33 1 23 45 67 89", "PHONE"),
+        ("FR76 3000 6000 0112 3456 7890 189", "IBAN"),
+        ("FR7630006000011234567890189", "IBAN"),
+        ("DE89 3704 0044 0532 0130 00", "IBAN"),
+    ],
+)
+def test_international_phone_and_spaced_iban_masked_in_full(value, entity):
+    text, counts = _scan(f"Coordonnees : {value} merci.")
+    assert text == f"Coordonnees : <{entity}_1> merci."
+    assert counts.get(entity) == 1
+
+
 @pytest.mark.parametrize("nir", ["1 85 05 78 006 084 36", "285057800608436", "2 85 05 2A 006 084"])
 def test_fr_nir_detected(nir):
     text, counts = _scan(f"Mon numero de securite sociale est {nir}.")
