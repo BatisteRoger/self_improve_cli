@@ -12,18 +12,38 @@ import re
 
 _REGEX_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("EMAIL", re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")),
+    # IBAN, compact or printed in space-separated groups of 4. Listed before
+    # PHONE so the digit tail of a spaced IBAN is never taken as a phone.
+    ("IBAN", re.compile(r"\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]{4}){2,7}(?: ?[A-Z0-9]{1,4})?\b")),
+    # French social security number (NIR/INSEE): sex, year, month, department
+    # (2A/2B for Corsica), commune, order, optional 2-digit key. Listed before
+    # PHONE so a spaced NIR is never split into a phone match.
+    (
+        "FR_NIR",
+        re.compile(
+            r"(?<!\d)[12]\s?\d{2}\s?\d{2}\s?(?:\d{2}|2[AB])\s?\d{3}\s?\d{3}(?:\s?\d{2})?(?!\d)"
+        ),
+    ),
+    # French national phone number: 0X XX XX XX XX with optional separators.
+    ("PHONE", re.compile(r"(?<!\d)0[1-9](?:[\s.-]?\d{2}){4}(?!\d)")),
+    # Birth date only in an explicit "ne/nee le <date>" context: a bare date
+    # pattern would destroy financial and scheduling text.
+    (
+        "BIRTH_DATE",
+        re.compile(r"\bnée?\s+le\s+\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b", re.IGNORECASE),
+    ),
     (
         "PHONE",
         # International format (+CC ...) or US-style 10 digits with separators.
         # Requires + prefix or full 10-digit grouping to avoid matching
-        # financial amounts like "1000" or "2518.17".
+        # financial amounts like "1000" or "2518.17". Up to 6 digit groups
+        # after the country code, so "+33 6 12 34 56 78" is covered in full.
         re.compile(
-            r"\+\d{1,3}[\s.-]?\d{1,4}[\s.-]?\d{1,4}[\s.-]?\d{1,4}[\s.-]?\d{0,4}"
+            r"\+\d{1,3}(?:[\s.-]?\d{1,4}){2,6}(?!\d)"
             r"|"
             r"\b\d{3}[\s.-]\d{3}[\s.-]\d{4}\b"
         ),
     ),
-    ("IBAN", re.compile(r"\b[A-Z]{2}\d{2}[A-Z0-9]{10,30}\b")),
     # Credit card: require 4-digit groups with separators (standard printed format).
     # Avoids matching UUIDs, timestamps, and other long digit sequences.
     ("CREDIT_CARD", re.compile(r"\b(?:\d{4}[ -]){3}\d{4}\b|\b(?:\d{4}[ -]){2}\d{6}[ -]\d{5}\b")),

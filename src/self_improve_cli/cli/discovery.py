@@ -23,8 +23,11 @@ from self_improve_cli.cli.common import (
 from self_improve_cli.domain import OutcomeSource, Trace, autofill_assessment
 from self_improve_cli.privacy import (
     AnonymizerBackend,
+    ValueMapSpec,
     anonymize_trace,
     is_presidio_available,
+    parse_drop_keys,
+    parse_value_maps,
 )
 from self_improve_cli.representations import write_ter
 
@@ -117,6 +120,19 @@ def _cmd_list_projects(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _privacy_env(name: str) -> str:
+    """Read a privacy setting: SELF_IMPROVE_<name>, else the legacy SELFIIMPROVE_<name>.
+
+    The misspelled SELFIIMPROVE_ prefix stays supported so existing .env files
+    keep working; the correctly spelled prefix wins when both are set.
+    """
+    for prefix in ("SELF_IMPROVE_", "SELFIIMPROVE_"):
+        val = os.environ.get(prefix + name, "").strip()
+        if val:
+            return val
+    return ""
+
+
 def _resolve_anonymizer(args: argparse.Namespace) -> AnonymizerBackend:
     """Resolve the anonymizer backend: CLI flag overrides env var, env var overrides 'auto'.
 
@@ -125,10 +141,15 @@ def _resolve_anonymizer(args: argparse.Namespace) -> AnonymizerBackend:
     cli_val = getattr(args, "anonymizer", None)
     if cli_val:
         return cli_val  # type: ignore[return-value]
-    env_val = os.environ.get("SELFIIMPROVE_ANONYMIZER", "").strip().lower()
+    env_val = _privacy_env("ANONYMIZER").lower()
     if env_val in ("auto", "presidio", "regex"):
         return env_val  # type: ignore[return-value]
     return "auto"
+
+
+def _resolve_structural_policy() -> tuple[frozenset[str], tuple[ValueMapSpec, ...]]:
+    """Read DROP_KEYS and VALUE_MAP from the environment. Raises ValueError on a bad spec."""
+    return parse_drop_keys(_privacy_env("DROP_KEYS")), parse_value_maps(_privacy_env("VALUE_MAP"))
 
 
 def _autofill_assessment(source: Any, store: Any, trace: Trace) -> str:
@@ -166,10 +187,11 @@ def _cmd_fetch_experiment(args: argparse.Namespace) -> int:
     from self_improve_cli.sources.langsmith import LangSmithSource
 
     policy = parse_outcome_key(args.outcome_key) if args.outcome_key else None
+    backend = _resolve_anonymizer(args)
+    drop_keys, value_maps = _resolve_structural_policy()
     source = LangSmithSource(project_name=args.project)
     listing = source.fetch_experiment(args.experiment)
     store = _get_store(args)
-    backend = _resolve_anonymizer(args)
     examples: dict[str, list[dict[str, Any]]] = {}
     failures: list[dict[str, str]] = []
     counts = {"stored": 0, "skipped": 0, "failed": 0}
@@ -198,7 +220,9 @@ def _cmd_fetch_experiment(args: argparse.Namespace) -> int:
                 continue
             if args.keep_raw:
                 store.save_raw(trace)
-            trace, _ = anonymize_trace(trace, backend=backend)
+            trace, _ = anonymize_trace(
+                trace, backend=backend, drop_keys=drop_keys, value_maps=value_maps
+            )
             store.save_sanitized(trace)
             write_ter(ref.trace_id, trace.runs, store)
             counts["stored"] += 1
@@ -285,6 +309,10 @@ def _cmd_fetch(args: argparse.Namespace) -> int:
     if args.experiment:
         return _cmd_fetch_experiment(args)
 
+    # Resolve privacy settings before any network call: a bad spec fails closed.
+    backend = _resolve_anonymizer(args)
+    drop_keys, value_maps = _resolve_structural_policy()
+
     source = LangSmithSource(project_name=args.project)
 
     project_id: str | None = None
@@ -328,8 +356,9 @@ def _cmd_fetch(args: argparse.Namespace) -> int:
         store.save_raw(trace)
 
     # Anonymize before persistence (privacy boundary).
-    backend = _resolve_anonymizer(args)
-    trace, report = anonymize_trace(trace, backend=backend)
+    trace, report = anonymize_trace(
+        trace, backend=backend, drop_keys=drop_keys, value_maps=value_maps
+    )
 
     sanitized_path = store.save_sanitized(trace)
 
@@ -403,7 +432,7 @@ def register(sub: argparse._SubParsersAction) -> None:
         default=None,
         help="Anonymization backend: 'auto' (presidio if installed, else regex), "
         "'presidio' (force, errors if unavailable), 'regex' (skip presidio, faster). "
-        "Overrides SELFIIMPROVE_ANONYMIZER env var. Default: auto.",
+        "Overrides SELF_IMPROVE_ANONYMIZER env var. Default: auto.",
     )
     p.add_argument(
         "--experiment",

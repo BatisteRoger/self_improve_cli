@@ -74,7 +74,22 @@ ENABLE_PROMPT_HUB="false"
 #   presidio  Force Presidio. Errors if not installed (falls back to regex).
 #   regex     Skip Presidio entirely. Faster, less comprehensive for PII.
 #             Secrets are still fully detected (regex patterns are always run).
-SELFIIMPROVE_ANONYMIZER="auto"
+#
+# The legacy misspelled name SELFIIMPROVE_ANONYMIZER is still read; this
+# name wins when both are set. Same rule for the two settings below.
+SELF_IMPROVE_ANONYMIZER="auto"
+
+# --- Structural redaction (optional, agent-specific) ---
+#
+# Comma-separated key names whose whole subtree is replaced, at any depth,
+# with a "<dropped:N chars>" marker. Use for fields that only hold raw data.
+SELF_IMPROVE_DROP_KEYS=""
+#
+# Comma-separated <table_key>:<value_field>:<token_field> specs. When the
+# target agent records its own pseudonymization table in the trace (a list of
+# objects under <table_key>), every exact occurrence of <value_field> is
+# replaced by its <token_field> across the trace, then <table_key> is dropped.
+SELF_IMPROVE_VALUE_MAP=""
 """
 
 
