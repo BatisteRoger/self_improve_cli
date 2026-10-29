@@ -378,6 +378,8 @@ Profiles:
 
 `trace_policy` reads the `policy_version` that `fetch` records in each stored trace's sanitization report (`privacy/report.py::POLICY_VERSION`) and warns about traces stored under an older version, or with no version at all. It reports trace IDs and counts only. Bump `POLICY_VERSION` in the same change that tightens sanitization; doctor then lists the traces to re-fetch or delete. `--data-dir` selects the scanned data root (default `./data`).
 
+`raw_copies` warns about `raw.json` files kept by `fetch --keep-raw` under the same data root (content not sanitized), by trace ID only. `env_hardening` warns when neither `SELF_IMPROVE_DROP_KEYS` nor `SELF_IMPROVE_VALUE_MAP` is set: `fetch` then applies pattern detection only, not the target-agent hardening. Values are never printed.
+
 What is **not** checked: API key validity (would require a network call),
 dependency freshness (would require an install), artifact freshness, Docker,
 databases. See `cli/doctor.py` for the full check list and scope honesty notes.

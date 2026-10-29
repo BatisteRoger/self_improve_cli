@@ -309,6 +309,58 @@ def _check_trace_policy(data_root: Path) -> Check:
     )
 
 
+def _check_raw_copies(data_root: Path) -> Check:
+    """Flag raw.json files kept by `fetch --keep-raw` (content not sanitized)."""
+    traces_dir = data_root / "traces"
+    raw = (
+        sorted(p.parent.name for p in traces_dir.glob("*/raw.json")) if traces_dir.is_dir() else []
+    )
+    if not raw:
+        return Check(id="raw_copies", status="pass", summary="No raw.json trace copies stored")
+    shown = ", ".join(raw[:5]) + (", ..." if len(raw) > 5 else "")
+    return Check(
+        id="raw_copies",
+        status="warn",
+        summary=f"{len(raw)} stored traces keep a raw.json copy (not sanitized): {shown}",
+        remedy=f"Delete raw.json under {traces_dir} once no longer needed.",
+    )
+
+
+# Structural redaction settings; SELFIIMPROVE_ is the legacy misspelled prefix.
+_HARDENING_VARS = ("DROP_KEYS", "VALUE_MAP")
+
+
+def _check_env_hardening() -> Check:
+    """Warn when no target-agent hardening setting is configured.
+
+    Values are never echoed: they name the target's sensitive keys.
+    """
+    configured = [
+        name
+        for name in _HARDENING_VARS
+        if any(
+            (os.environ.get(prefix + name) or "").strip()
+            for prefix in ("SELF_IMPROVE_", "SELFIIMPROVE_")
+        )
+    ]
+    if configured:
+        return Check(
+            id="env_hardening",
+            status="pass",
+            summary="Target-agent hardening env vars set: "
+            + ", ".join(f"SELF_IMPROVE_{n}" for n in configured),
+        )
+    return Check(
+        id="env_hardening",
+        status="warn",
+        summary="Target-agent hardening env vars not set "
+        "(SELF_IMPROVE_DROP_KEYS, SELF_IMPROVE_VALUE_MAP): fetch applies "
+        "pattern detection only",
+        remedy="Set them in .env for the target agent you analyze; see "
+        "'Structural redaction' in AGENTS.md.",
+    )
+
+
 def _check_dev_ruff() -> Check:
     if shutil.which("ruff"):
         return Check(id="dev_ruff", status="pass", summary="ruff found on PATH")
@@ -369,7 +421,9 @@ def run_doctor(
     report.checks.append(_check_env_api_key(profile))
     report.checks.append(_check_env_project())
     report.checks.append(_check_wheel_artifacts())
+    report.checks.append(_check_env_hardening())
     report.checks.append(_check_trace_policy(data_root or Path("data")))
+    report.checks.append(_check_raw_copies(data_root or Path("data")))
 
     # Dev tooling (always run, warn-only)
     report.checks.append(_check_dev_ruff())

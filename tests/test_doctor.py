@@ -104,7 +104,9 @@ def test_report_has_all_expected_check_ids():
         "env_api_key",
         "env_project",
         "wheel_artifacts",
+        "env_hardening",
         "trace_policy",
+        "raw_copies",
         "dev_ruff",
         "dev_pyright",
         "dev_pytest",
@@ -131,7 +133,7 @@ def test_report_to_dict_structure():
     d = report.to_dict()
     assert d["profile"] == "fetch"
     assert d["offline"] is True
-    assert len(d["checks"]) == 13
+    assert len(d["checks"]) == 15
     for check_dict in d["checks"]:
         assert "id" in check_dict
         assert "status" in check_dict
@@ -257,6 +259,40 @@ def test_trace_policy_flags_legacy_and_unmarked_traces(tmp_path):
     assert "t-current" not in check.summary
     assert "SENSITIVE-VALUE" not in check.summary
     assert check.remedy is not None
+
+
+def _check(report, check_id):
+    return next(c for c in report.checks if c.id == check_id)
+
+
+def test_raw_copies_flagged_without_content(tmp_path):
+    assert _check(run_doctor(data_root=tmp_path), "raw_copies").status == "pass"
+    _store_trace(tmp_path, "t-raw", None)
+    (tmp_path / "traces" / "t-raw" / "raw.json").write_text('{"x": "RAW-VALUE"}', encoding="utf-8")
+    check = _check(run_doctor(data_root=tmp_path), "raw_copies")
+    assert check.status == "warn"
+    assert "t-raw" in check.summary
+    assert "RAW-VALUE" not in check.summary
+
+
+@pytest.mark.parametrize("prefix", ["SELF_IMPROVE_", "SELFIIMPROVE_"])
+def test_env_hardening_set_passes_without_echoing_values(monkeypatch, prefix):
+    for name in ("DROP_KEYS", "VALUE_MAP"):
+        monkeypatch.delenv("SELF_IMPROVE_" + name, raising=False)
+        monkeypatch.delenv("SELFIIMPROVE_" + name, raising=False)
+    monkeypatch.setenv(prefix + "DROP_KEYS", "secret_key_name")
+    check = _check(run_doctor(), "env_hardening")
+    assert check.status == "pass"
+    assert "secret_key_name" not in check.summary
+
+
+def test_env_hardening_unset_warns(monkeypatch):
+    for name in ("DROP_KEYS", "VALUE_MAP"):
+        monkeypatch.delenv("SELF_IMPROVE_" + name, raising=False)
+        monkeypatch.delenv("SELFIIMPROVE_" + name, raising=False)
+    check = _check(run_doctor(), "env_hardening")
+    assert check.status == "warn"
+    assert "hardening env vars not set" in check.summary
 
 
 def test_doctor_command_data_dir_flag(tmp_path, capsys):
