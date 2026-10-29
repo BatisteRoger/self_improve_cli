@@ -147,6 +147,13 @@ self-improve narrative <trace_id>         # L2: read the trace story
 self-improve run-detail <trace_id> <run_id>  # L3: full content of one run
 ```
 
+If the target agent records its own pseudonymization table in its traces, or
+carries raw content under known keys, set `SELF_IMPROVE_VALUE_MAP` and
+`SELF_IMPROVE_DROP_KEYS` in `.env` for that agent before the first `fetch`.
+Without them, `fetch` applies pattern detection only, not the hardening
+specific to the target. Format and behavior: "Structural redaction" in
+[AGENTS.md](AGENTS.md).
+
 ## Commands
 
 | Level | Command | What you get |

@@ -306,11 +306,11 @@ optional settings, applied by `fetch` before pattern detection, cover that
 - `SELF_IMPROVE_VALUE_MAP="<table_key>:<value_field>:<token_field>"`
   (comma-separated for several tables). Some target agents pseudonymize their
   own data and record the table in the trace: a list of objects under
-  `<table_key>`, at any depth. Every exact occurrence of a `<value_field>`
-  string anywhere in the trace (root input, runs before the pseudonymization
-  step) is replaced by its `<token_field>`, so the target's tag vocabulary
-  stays consistent. Longer values are replaced first. `<table_key>` is then
-  dropped.
+  `<table_key>`, at any depth. Every occurrence of a `<value_field>` string,
+  in any letter case, anywhere in the trace (root input, runs before the
+  pseudonymization step) is replaced by its `<token_field>`, so the target's
+  tag vocabulary stays consistent. Longer values are replaced first.
+  `<table_key>` is then dropped.
 - `SELF_IMPROVE_DROP_KEYS="key_a,key_b"`: every subtree under one of these
   keys, at any depth, becomes a `<dropped:N chars>` marker, so sizes stay
   visible.
@@ -318,6 +318,12 @@ optional settings, applied by `fetch` before pattern detection, cover that
 A malformed `VALUE_MAP` spec makes `fetch` fail before any network call. The
 sanitization report counts replacements as `MAPPED_VALUE` and dropped
 subtrees as `DROPPED_KEY`.
+
+Both settings are empty by default, and the key names depend on the target
+agent: configure them in `.env` for the agent you analyze. Without them,
+`fetch` applies only pattern detection, not the hardening specific to that
+target. Check that `info` reports non-zero `MAPPED_VALUE` / `DROPPED_KEY`
+counts on a trace that should contain the table or the keys.
 
 ### Project and workspace configuration
 
