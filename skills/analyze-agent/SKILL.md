@@ -45,9 +45,12 @@ the anonymizer before the first `fetch`: list the keys that carry raw values
 or re-identification tables in `SELF_IMPROVE_DROP_KEYS`, and map the
 target's own value-to-token table with `SELF_IMPROVE_VALUE_MAP` so raw
 values are replaced by their tokens before the table itself is dropped.
-Then check that `sanitized.json` carries the `<dropped:N chars>` markers
-before reading any content. The target's key names belong in its
-architecture document, not in this skill.
+Then, before reading any content, check that `info` reports non-zero
+`DROPPED_KEY` and `MAPPED_VALUE` counts under
+`sanitization_report.entity_counts`: the report confirms the hardening ran
+without opening the trace itself. A zero count on a trace that should carry
+the table or the keys means the settings do not match the target. The
+target's key names belong in its architecture document, not in this skill.
 
 If no assessment exists, proceed without it — but consider setting one
 before drawing conclusions about efficiency.
