@@ -317,7 +317,8 @@ optional settings, applied by `fetch` before pattern detection, cover that
 
 A malformed `VALUE_MAP` spec makes `fetch` fail before any network call. The
 sanitization report counts replacements as `MAPPED_VALUE` and dropped
-subtrees as `DROPPED_KEY`.
+subtrees as `DROPPED_KEY`, and records the configuration applied under
+`hardening` (see `trace_hardening` in the doctor section).
 
 Both settings are empty by default, and the key names depend on the target
 agent: configure them in `.env` for the agent you analyze. Without them,
@@ -375,6 +376,12 @@ Profiles:
   metrics) on already-fetched traces.
 - `fetch`: escalates `langsmith_extra` and `env_api_key` to `fail`, since the
   `fetch` command cannot work without them.
+
+`trace_policy` reads the `policy_version` that `fetch` records in each stored trace's sanitization report (`privacy/report.py::POLICY_VERSION`) and warns about traces stored under an older version, or with no version at all. It reports trace IDs and counts only. Bump `POLICY_VERSION` in the same change that tightens sanitization; doctor then lists the traces to re-fetch or delete. `--data-dir` selects the scanned data root (default `./data`).
+
+`trace_hardening` compares the `hardening` fingerprint that `fetch` records in each sanitization report (anonymizer engine, number of drop keys, number of value-map specs, and a 12-character hash that also covers the configured key names) with the configuration `fetch` would resolve now from the environment. It warns about traces with a different fingerprint or none. A trace fetched with an explicit `--anonymizer` flag differs when the flag and the env disagree. Key names and trace values are never stored or printed.
+
+`raw_copies` warns about `raw.json` files kept by `fetch --keep-raw` under the same data root (content not sanitized), by trace ID only. `env_hardening` warns when neither `SELF_IMPROVE_DROP_KEYS` nor `SELF_IMPROVE_VALUE_MAP` is set: `fetch` then applies pattern detection only, not the target-agent hardening. Values are never printed.
 
 What is **not** checked: API key validity (would require a network call),
 dependency freshness (would require an install), artifact freshness, Docker,

@@ -36,13 +36,13 @@ Internal modules:
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from self_improve_cli.domain import Trace
 from self_improve_cli.privacy.placeholders import PlaceholderMap
 from self_improve_cli.privacy.presidio_adapter import is_presidio_available
 from self_improve_cli.privacy.redact import _redact_run
-from self_improve_cli.privacy.report import SanitizationReport
+from self_improve_cli.privacy.report import SanitizationReport, hardening_fingerprint
 from self_improve_cli.privacy.structural import (
     ValueMapSpec,
     collect_value_map,
@@ -59,10 +59,19 @@ __all__ = [
     "SanitizationReport",
     "ValueMapSpec",
     "anonymize_trace",
+    "hardening_for",
     "is_presidio_available",
     "parse_drop_keys",
     "parse_value_maps",
 ]
+
+
+def hardening_for(
+    backend: str, drop_keys: frozenset[str], value_maps: tuple[ValueMapSpec, ...]
+) -> dict[str, Any]:
+    """Fingerprint of a hardening configuration, as stored in the report."""
+    specs = (f"{s.table_key}:{s.value_field}:{s.token_field}" for s in value_maps)
+    return hardening_fingerprint(backend, drop_keys, specs)
 
 
 def anonymize_trace(
@@ -90,7 +99,7 @@ def anonymize_trace(
     sharing or publishing.
     """
     pmap = PlaceholderMap()
-    report = SanitizationReport()
+    report = SanitizationReport(hardening=hardening_for(backend, drop_keys, value_maps))
 
     mapping = collect_value_map(trace.runs, value_maps)
     if replaced := replace_values(trace.runs, mapping):

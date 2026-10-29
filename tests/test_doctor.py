@@ -11,6 +11,8 @@ from self_improve_cli.cli.doctor import (
     run_doctor,
 )
 from self_improve_cli.cli.main import main
+from self_improve_cli.privacy import ValueMapSpec, hardening_for
+from self_improve_cli.privacy.report import POLICY_VERSION
 
 # ---------------------------------------------------------------------------
 # Unit tests for individual checks
@@ -103,6 +105,10 @@ def test_report_has_all_expected_check_ids():
         "env_api_key",
         "env_project",
         "wheel_artifacts",
+        "env_hardening",
+        "trace_policy",
+        "trace_hardening",
+        "raw_copies",
         "dev_ruff",
         "dev_pyright",
         "dev_pytest",
@@ -129,7 +135,7 @@ def test_report_to_dict_structure():
     d = report.to_dict()
     assert d["profile"] == "fetch"
     assert d["offline"] is True
-    assert len(d["checks"]) == 12
+    assert len(d["checks"]) == 16
     for check_dict in d["checks"]:
         assert "id" in check_dict
         assert "status" in check_dict
@@ -213,3 +219,140 @@ def test_doctor_command_invalid_profile_rejected(capsys):
     with pytest.raises(SystemExit) as exc_info:
         main(["doctor", "--profile", "invalid"])
     assert exc_info.value.code == 2
+
+
+# ---------------------------------------------------------------------------
+# trace_policy: stored traces vs current privacy policy version
+# ---------------------------------------------------------------------------
+
+
+def _store_trace(data_root, trace_id, report):
+    trace_dir = data_root / "traces" / trace_id
+    trace_dir.mkdir(parents=True)
+    payload = {"trace_id": trace_id, "runs": [], "secret_field": "SENSITIVE-VALUE"}
+    if report is not None:
+        payload["sanitization_report"] = report
+    (trace_dir / "sanitized.json").write_text(json.dumps(payload), encoding="utf-8")
+
+
+def _trace_policy(report):
+    return next(c for c in report.checks if c.id == "trace_policy")
+
+
+def test_trace_policy_skips_without_stored_traces(tmp_path):
+    check = _trace_policy(run_doctor(data_root=tmp_path))
+    assert check.status == "skip"
+
+
+def test_trace_policy_passes_when_all_traces_current(tmp_path):
+    _store_trace(tmp_path, "t-current", {"policy_version": str(POLICY_VERSION)})
+    check = _trace_policy(run_doctor(data_root=tmp_path))
+    assert check.status == "pass"
+
+
+def test_trace_policy_flags_legacy_and_unmarked_traces(tmp_path):
+    _store_trace(tmp_path, "t-current", {"policy_version": str(POLICY_VERSION)})
+    _store_trace(tmp_path, "t-old", {"policy_version": str(POLICY_VERSION - 1)})
+    _store_trace(tmp_path, "t-unmarked", None)
+    check = _trace_policy(run_doctor(data_root=tmp_path))
+    assert check.status == "warn"
+    assert "2 of 3" in check.summary
+    assert "t-old" in check.summary and "t-unmarked" in check.summary
+    assert "t-current" not in check.summary
+    assert "SENSITIVE-VALUE" not in check.summary
+    assert check.remedy is not None
+
+
+def _check(report, check_id):
+    return next(c for c in report.checks if c.id == check_id)
+
+
+def test_raw_copies_flagged_without_content(tmp_path):
+    assert _check(run_doctor(data_root=tmp_path), "raw_copies").status == "pass"
+    _store_trace(tmp_path, "t-raw", None)
+    (tmp_path / "traces" / "t-raw" / "raw.json").write_text('{"x": "RAW-VALUE"}', encoding="utf-8")
+    check = _check(run_doctor(data_root=tmp_path), "raw_copies")
+    assert check.status == "warn"
+    assert "t-raw" in check.summary
+    assert "RAW-VALUE" not in check.summary
+
+
+@pytest.mark.parametrize("prefix", ["SELF_IMPROVE_", "SELFIIMPROVE_"])
+def test_env_hardening_set_passes_without_echoing_values(monkeypatch, prefix):
+    for name in ("DROP_KEYS", "VALUE_MAP"):
+        monkeypatch.delenv("SELF_IMPROVE_" + name, raising=False)
+        monkeypatch.delenv("SELFIIMPROVE_" + name, raising=False)
+    monkeypatch.setenv(prefix + "DROP_KEYS", "secret_key_name")
+    check = _check(run_doctor(), "env_hardening")
+    assert check.status == "pass"
+    assert "secret_key_name" not in check.summary
+
+
+def test_env_hardening_unset_warns(monkeypatch):
+    for name in ("DROP_KEYS", "VALUE_MAP"):
+        monkeypatch.delenv("SELF_IMPROVE_" + name, raising=False)
+        monkeypatch.delenv("SELFIIMPROVE_" + name, raising=False)
+    check = _check(run_doctor(), "env_hardening")
+    assert check.status == "warn"
+    assert "hardening env vars not set" in check.summary
+
+
+def _clear_privacy_env(monkeypatch):
+    for name in ("ANONYMIZER", "DROP_KEYS", "VALUE_MAP"):
+        monkeypatch.delenv("SELF_IMPROVE_" + name, raising=False)
+        monkeypatch.delenv("SELFIIMPROVE_" + name, raising=False)
+
+
+def test_trace_hardening_matches_current_config(tmp_path, monkeypatch):
+    _clear_privacy_env(monkeypatch)
+    monkeypatch.setenv("SELF_IMPROVE_DROP_KEYS", "raw_blob")
+    current = hardening_for("auto", frozenset({"raw_blob"}), ())
+    _store_trace(tmp_path, "t-same", {"hardening": current})
+    assert _check(run_doctor(data_root=tmp_path), "trace_hardening").status == "pass"
+
+
+def test_trace_hardening_flags_other_and_missing_fingerprints(tmp_path, monkeypatch):
+    _clear_privacy_env(monkeypatch)
+    monkeypatch.setenv("SELF_IMPROVE_DROP_KEYS", "raw_blob")
+    _store_trace(
+        tmp_path, "t-same", {"hardening": hardening_for("auto", frozenset({"raw_blob"}), ())}
+    )
+    _store_trace(tmp_path, "t-other", {"hardening": hardening_for("auto", frozenset(), ())})
+    _store_trace(tmp_path, "t-none", {"policy_version": str(POLICY_VERSION)})
+    check = _check(run_doctor(data_root=tmp_path), "trace_hardening")
+    assert check.status == "warn"
+    assert "2 of 3" in check.summary
+    assert "t-other" in check.summary and "t-none" in check.summary
+    assert "t-same" not in check.summary
+    assert "raw_blob" not in check.summary
+    assert "SENSITIVE-VALUE" not in check.summary
+
+
+def test_trace_hardening_malformed_value_map_warns(tmp_path, monkeypatch):
+    _clear_privacy_env(monkeypatch)
+    monkeypatch.setenv("SELF_IMPROVE_VALUE_MAP", "only_one_part")
+    _store_trace(tmp_path, "t1", None)
+    check = _check(run_doctor(data_root=tmp_path), "trace_hardening")
+    assert check.status == "warn"
+    assert "malformed" in check.summary
+    assert "only_one_part" not in check.summary
+
+
+def test_hardening_fingerprint_hides_names_but_tracks_them():
+    a = hardening_for("regex", frozenset({"key_a", "key_b"}), (ValueMapSpec("t", "v", "k"),))
+    renamed = hardening_for("regex", frozenset({"key_a", "key_c"}), (ValueMapSpec("t", "v", "k"),))
+    assert a == {"engine": "regex", "drop_keys": 2, "value_maps": 1, "hash": a["hash"]}
+    assert "key_a" not in json.dumps(a)
+    assert renamed["hash"] != a["hash"]
+    assert (
+        hardening_for("auto", frozenset({"key_a", "key_b"}), (ValueMapSpec("t", "v", "k"),))["hash"]
+        != a["hash"]
+    )
+
+
+def test_doctor_command_data_dir_flag(tmp_path, capsys):
+    _store_trace(tmp_path, "t-unmarked", None)
+    main(["doctor", "--format", "json", "--data-dir", str(tmp_path)])
+    data = json.loads(capsys.readouterr().out)
+    check = next(c for c in data["checks"] if c["id"] == "trace_policy")
+    assert check["status"] == "warn"

@@ -25,18 +25,23 @@ What is NOT checked:
   network call and a paid API).
 - Whether .venv dependencies are up-to-date (that would require an install).
 - Freshness of generated artifacts (skills/, py.typed are checked for
-  existence only).
+  existence only). Stored traces are checked for their privacy policy
+  version only (trace_policy), not re-scanned for sensitive content.
 - Docker, databases, or other services (this project has none).
 """
 
 from __future__ import annotations
 
+import argparse
+import json
 import os
 import shutil
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
+
+from self_improve_cli.privacy.report import POLICY_VERSION
 
 CheckStatus = Literal["pass", "warn", "fail", "skip"]
 
@@ -262,6 +267,158 @@ def _check_wheel_artifacts() -> Check:
     )
 
 
+def _stored_policy_version(sanitized_path: Path) -> int | None:
+    """Policy version recorded in a stored trace, or None if absent/unreadable."""
+    try:
+        data = json.loads(sanitized_path.read_text(encoding="utf-8"))
+        return int(data["sanitization_report"]["policy_version"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def _check_trace_policy(data_root: Path) -> Check:
+    """Flag stored traces sanitized under an older privacy policy.
+
+    A trace without a readable policy_version counts as legacy. Only trace
+    IDs (directory names) and counts are reported, never trace content.
+    """
+    traces_dir = data_root / "traces"
+    paths = sorted(traces_dir.glob("*/sanitized.json")) if traces_dir.is_dir() else []
+    if not paths:
+        return Check(
+            id="trace_policy",
+            status="skip",
+            summary=f"No stored traces under {traces_dir}",
+        )
+    legacy = [p.parent.name for p in paths if (_stored_policy_version(p) or 0) < POLICY_VERSION]
+    if not legacy:
+        return Check(
+            id="trace_policy",
+            status="pass",
+            summary=f"All {len(paths)} stored traces use privacy policy v{POLICY_VERSION}",
+        )
+    shown = ", ".join(legacy[:5]) + (", ..." if len(legacy) > 5 else "")
+    return Check(
+        id="trace_policy",
+        status="warn",
+        summary=(
+            f"{len(legacy)} of {len(paths)} stored traces predate privacy policy "
+            f"v{POLICY_VERSION}: {shown}"
+        ),
+        remedy="Re-fetch the traces still needed, then delete the other legacy "
+        f"trace directories under {traces_dir}.",
+    )
+
+
+def _stored_hardening_hash(sanitized_path: Path) -> str | None:
+    """Hardening fingerprint hash recorded in a stored trace, or None."""
+    try:
+        data = json.loads(sanitized_path.read_text(encoding="utf-8"))
+        return str(data["sanitization_report"]["hardening"]["hash"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def _check_trace_hardening(data_root: Path) -> Check:
+    """Flag stored traces whose hardening fingerprint differs from the current config.
+
+    The current config is what `fetch` would resolve from the environment
+    (anonymizer, drop keys, value maps), without a CLI flag. A trace with no
+    fingerprint counts as different. Only trace IDs and counts are reported.
+    """
+    # Lazy: discovery pulls the fetch pipeline, which doctor only needs here.
+    from self_improve_cli.cli.discovery import _resolve_anonymizer, _resolve_structural_policy
+    from self_improve_cli.privacy import hardening_for
+
+    traces_dir = data_root / "traces"
+    paths = sorted(traces_dir.glob("*/sanitized.json")) if traces_dir.is_dir() else []
+    if not paths:
+        return Check(
+            id="trace_hardening", status="skip", summary=f"No stored traces under {traces_dir}"
+        )
+    try:
+        drop_keys, value_maps = _resolve_structural_policy()
+    except ValueError:
+        return Check(
+            id="trace_hardening",
+            status="warn",
+            summary="SELF_IMPROVE_VALUE_MAP is malformed: current hardening config unknown",
+            remedy="Fix the spec: <table_key>:<value_field>:<token_field>, comma-separated.",
+        )
+    current = hardening_for(_resolve_anonymizer(argparse.Namespace()), drop_keys, value_maps)
+    differ = [p.parent.name for p in paths if _stored_hardening_hash(p) != current["hash"]]
+    if not differ:
+        return Check(
+            id="trace_hardening",
+            status="pass",
+            summary=f"All {len(paths)} stored traces match the current hardening config",
+        )
+    shown = ", ".join(differ[:5]) + (", ..." if len(differ) > 5 else "")
+    return Check(
+        id="trace_hardening",
+        status="warn",
+        summary=(
+            f"{len(differ)} of {len(paths)} stored traces were hardened with another "
+            f"config, or record none: {shown}"
+        ),
+        remedy="Re-fetch the traces still needed with the current env config, then "
+        f"delete the others under {traces_dir}. A trace fetched with an explicit "
+        "--anonymizer flag also differs when the flag and the env disagree.",
+    )
+
+
+def _check_raw_copies(data_root: Path) -> Check:
+    """Flag raw.json files kept by `fetch --keep-raw` (content not sanitized)."""
+    traces_dir = data_root / "traces"
+    raw = (
+        sorted(p.parent.name for p in traces_dir.glob("*/raw.json")) if traces_dir.is_dir() else []
+    )
+    if not raw:
+        return Check(id="raw_copies", status="pass", summary="No raw.json trace copies stored")
+    shown = ", ".join(raw[:5]) + (", ..." if len(raw) > 5 else "")
+    return Check(
+        id="raw_copies",
+        status="warn",
+        summary=f"{len(raw)} stored traces keep a raw.json copy (not sanitized): {shown}",
+        remedy=f"Delete raw.json under {traces_dir} once no longer needed.",
+    )
+
+
+# Structural redaction settings; SELFIIMPROVE_ is the legacy misspelled prefix.
+_HARDENING_VARS = ("DROP_KEYS", "VALUE_MAP")
+
+
+def _check_env_hardening() -> Check:
+    """Warn when no target-agent hardening setting is configured.
+
+    Values are never echoed: they name the target's sensitive keys.
+    """
+    configured = [
+        name
+        for name in _HARDENING_VARS
+        if any(
+            (os.environ.get(prefix + name) or "").strip()
+            for prefix in ("SELF_IMPROVE_", "SELFIIMPROVE_")
+        )
+    ]
+    if configured:
+        return Check(
+            id="env_hardening",
+            status="pass",
+            summary="Target-agent hardening env vars set: "
+            + ", ".join(f"SELF_IMPROVE_{n}" for n in configured),
+        )
+    return Check(
+        id="env_hardening",
+        status="warn",
+        summary="Target-agent hardening env vars not set "
+        "(SELF_IMPROVE_DROP_KEYS, SELF_IMPROVE_VALUE_MAP): fetch applies "
+        "pattern detection only",
+        remedy="Set them in .env for the target agent you analyze; see "
+        "'Structural redaction' in AGENTS.md.",
+    )
+
+
 def _check_dev_ruff() -> Check:
     if shutil.which("ruff"):
         return Check(id="dev_ruff", status="pass", summary="ruff found on PATH")
@@ -303,7 +460,9 @@ def _check_dev_pytest() -> Check:
 # ---------------------------------------------------------------------------
 
 
-def run_doctor(profile: str = "default", offline: bool = False) -> DoctorReport:
+def run_doctor(
+    profile: str = "default", offline: bool = False, data_root: Path | None = None
+) -> DoctorReport:
     """Run all doctor checks for the given profile.
 
     Read-only: no installs, no network, no mutations.
@@ -320,6 +479,10 @@ def run_doctor(profile: str = "default", offline: bool = False) -> DoctorReport:
     report.checks.append(_check_env_api_key(profile))
     report.checks.append(_check_env_project())
     report.checks.append(_check_wheel_artifacts())
+    report.checks.append(_check_env_hardening())
+    report.checks.append(_check_trace_policy(data_root or Path("data")))
+    report.checks.append(_check_trace_hardening(data_root or Path("data")))
+    report.checks.append(_check_raw_copies(data_root or Path("data")))
 
     # Dev tooling (always run, warn-only)
     report.checks.append(_check_dev_ruff())
