@@ -8,9 +8,9 @@ know those values. This module uses the table itself:
 
 1. ``collect_value_map`` reads every configured table, at any depth, into a
    ``{value: token}`` mapping.
-2. ``replace_values`` replaces each exact occurrence of a value by its token
-   across the whole payload, so the target's own tag vocabulary stays
-   consistent.
+2. ``replace_values`` replaces each occurrence of a value, in any letter
+   case, by its token across the whole payload, so the target's own tag
+   vocabulary stays consistent.
 3. ``drop_keys`` replaces configured keys (and every table key) with a
    ``<dropped:N chars>`` marker, so sizes stay visible.
 
@@ -136,18 +136,29 @@ def _apply_to_run(run: Run, fn: Callable[[str], str]) -> None:
 
 
 def replace_values(runs: Iterable[Run], mapping: dict[str, str]) -> int:
-    """Replace every exact occurrence of a mapped value by its token.
+    """Replace every occurrence of a mapped value by its token, ignoring case.
 
-    Longer values win over values they contain. Returns the replacement count.
+    ``DUPONT`` and ``dupont`` get the token of ``Dupont``. Longer values win
+    over values they contain. Returns the replacement count.
     """
     if not mapping:
         return 0
-    pattern = re.compile("|".join(re.escape(v) for v in sorted(mapping, key=len, reverse=True)))
+    by_lower: dict[str, str] = {}
+    for value, token in mapping.items():
+        by_lower.setdefault(value.lower(), token)
+    pattern = re.compile(
+        "|".join(re.escape(v) for v in sorted(mapping, key=len, reverse=True)), re.IGNORECASE
+    )
     count = 0
+
+    def token_for(match: re.Match[str]) -> str:
+        # Unicode case pairs where lower() and IGNORECASE disagree still get
+        # masked: never return the matched raw text.
+        return by_lower.get(match.group(0).lower(), "<MAPPED_VALUE>")
 
     def substitute(text: str) -> str:
         nonlocal count
-        result, n = pattern.subn(lambda m: mapping[m.group(0)], text)
+        result, n = pattern.subn(token_for, text)
         count += n
         return result
 

@@ -86,6 +86,13 @@ def test_mapping_table_nested_in_child_run_applies_to_whole_trace():
     assert "Bob" not in json.dumps(trace.runs[1].outputs)
 
 
+def test_mapped_values_replaced_in_any_letter_case():
+    trace = _pseudonymized_trace()
+    trace.runs[0].inputs = {"q": "ALICE MARTIN, alice martin, springFIELD"}
+    trace, _ = anonymize_trace(trace, backend="regex", value_maps=(_SPEC,))
+    assert trace.runs[0].inputs["q"] == "<NAME_1>, <NAME_1>, <CITY_1>"
+
+
 def test_drop_keys_replaces_subtree_with_size_marker_at_any_depth():
     secret = {"text": "raw content", "n": 1}
     root = make_root()
