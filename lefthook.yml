@@ -1,0 +1,22 @@
+# Git hooks via lefthook — same runner as the workspace repo.
+# Install once: `uv run lefthook install`
+#
+# Parity contract with .github/workflows/ci.yml:
+# - pre-commit fixes what CI would reject (lint + format, staged files only).
+# - pre-push runs the exact CI check set so a red CI run is never a surprise.
+
+pre-commit:
+  commands:
+    ruff:
+      glob: "*.py"
+      run: uv run ruff check --fix {staged_files} && uv run ruff format {staged_files}
+      stage_fixed: true
+
+pre-push:
+  commands:
+    ci-parity:
+      run: >-
+        uv run pytest -q
+        && uv run ruff check src tests
+        && uv run ruff format --check src tests
+        && uv run pyright src
