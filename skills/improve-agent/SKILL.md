@@ -1,6 +1,6 @@
 ---
 name: improve-agent
-description: Run one observe-diagnose-intervene-verify iteration on a target agent — task run, trace fetch, diagnosis, persisted findings, compare receipt. For one-off diagnosis: `analyze-agent`.
+description: "Run one observe-diagnose-intervene-verify iteration on a target agent — task run, trace fetch, diagnosis, persisted findings, compare receipt. For one-off diagnosis: `analyze-agent`."
 ---
 
 # Improve an agent through the loop
