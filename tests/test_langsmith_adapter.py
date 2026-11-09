@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from self_improve_cli.domain import RunType
 from self_improve_cli.sources.langsmith import (
     LangSmithSource,
@@ -118,7 +120,6 @@ class _MockClient:
         project: _MockProject | None = None,
         retrieve_result: Any | None = None,
         retrieve_exc: Exception | None = None,
-        read_run_result: Any | None = None,
     ) -> None:
         self.traces = _MockTraces(traces=traces, runs=runs)
         self.runs = _MockRuns(
@@ -127,17 +128,11 @@ class _MockClient:
             retrieve_exc=retrieve_exc,
         )
         self._project = project or _MockProject()
-        self._read_run_result = read_run_result
         self.aread_project_calls: list[dict] = []
-        self.read_run_calls: list[dict] = []
 
     async def aread_project(self, project_name: str | None = None, **_kw: Any) -> _MockProject:
         self.aread_project_calls.append({"project_name": project_name})
         return self._project
-
-    def read_run(self, run_id: str) -> Any:
-        self.read_run_calls.append({"run_id": run_id})
-        return self._read_run_result
 
 
 # ---------------------------------------------------------------------------
@@ -398,14 +393,14 @@ def test_project_id_resolution_caches(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Tests: resolve_trace_id (SmithDB-native + legacy fallback)
+# Tests: resolve_trace_id (runs.retrieve only, no global lookup)
 # ---------------------------------------------------------------------------
+# The mock client has no read_run: the deprecated global lookup (removed by
+# LangSmith on 31 Jan 2027) would fail these tests with AttributeError.
 
 
 def test_resolve_trace_id_smithdb_native(monkeypatch):
     """When a project is configured and the run is in it, uses runs.retrieve."""
-    from langsmith import NotFoundError  # noqa: F401 — ensure import works
-
     retrieve_result = _MockRun(
         id="run-abc",
         trace_id="trace-resolved",
@@ -422,72 +417,48 @@ def test_resolve_trace_id_smithdb_native(monkeypatch):
     # runs.retrieve was called with the configured project_id
     assert client.runs.retrieve_calls[0]["run_id"] == "run-abc"
     assert client.runs.retrieve_calls[0]["project_id"] == "proj-uuid-123"
-    # Legacy read_run was NOT called
-    assert client.read_run_calls == []
+    assert not hasattr(client, "read_run")
 
 
-def test_resolve_trace_id_falls_back_on_not_found(monkeypatch):
-    """When the run is not in the configured project (404), falls back to read_run."""
+def test_resolve_trace_id_not_found_raises_clear_error(monkeypatch):
+    """A run missing from the configured project raises a RuntimeError naming the project."""
     import httpx
     from langsmith import NotFoundError
 
     _404 = httpx.Response(404, request=httpx.Request("GET", "https://example.com"))
-    legacy_run = _MockRun(
-        id="run-abc",
-        trace_id="trace-from-legacy",
-        session_id="other-proj-uuid",
-    )
-    client = _MockClient(
-        retrieve_exc=NotFoundError("not found", response=_404, body=None),
-        read_run_result=legacy_run,
-    )
+    client = _MockClient(retrieve_exc=NotFoundError("not found", response=_404, body=None))
 
     monkeypatch.setenv("LANGSMITH_PROJECT", "test-project")
     source = LangSmithSource(client=client)
-    resolution = source.resolve_trace_id("run-abc")
 
-    # Fell back to read_run
-    assert resolution.trace_id == "trace-from-legacy"
-    assert resolution.project_id == "other-proj-uuid"
+    with pytest.raises(RuntimeError, match=r"not found in project 'test-project'.*--project"):
+        source.resolve_trace_id("run-abc")
+
     assert len(client.runs.retrieve_calls) == 1
-    assert len(client.read_run_calls) == 1
 
 
-def test_resolve_trace_id_no_project_uses_legacy(monkeypatch):
-    """When no project is configured, uses legacy read_run directly."""
-    legacy_run = _MockRun(
-        id="run-abc",
-        trace_id="trace-legacy",
-        session_id="some-proj-uuid",
-    )
-    client = _MockClient(read_run_result=legacy_run)
+def test_resolve_trace_id_no_project_raises_clear_error(monkeypatch):
+    """Without a project, raises a RuntimeError asking for LANGSMITH_PROJECT or --project."""
+    client = _MockClient()
 
     monkeypatch.delenv("LANGSMITH_PROJECT", raising=False)
     monkeypatch.delenv("LANGCHAIN_PROJECT", raising=False)
     source = LangSmithSource(client=client)
-    resolution = source.resolve_trace_id("run-abc")
 
-    assert resolution.trace_id == "trace-legacy"
-    # runs.retrieve was NOT attempted (no project to try)
+    with pytest.raises(RuntimeError, match=r"LANGSMITH_PROJECT.*--project"):
+        source.resolve_trace_id("run-abc")
+
+    # No API call at all: neither project lookup nor runs.retrieve
+    assert client.aread_project_calls == []
     assert client.runs.retrieve_calls == []
-    assert len(client.read_run_calls) == 1
 
 
 def test_resolve_trace_id_non_404_error_propagates(monkeypatch):
-    """Non-404 errors from runs.retrieve propagate (no legacy fallback)."""
-
-    # APIStatusError requires a response object; use a plain RuntimeError
-    # to verify non-NotFoundError exceptions are not swallowed.
+    """Non-404 errors from runs.retrieve propagate unchanged."""
     client = _MockClient(retrieve_exc=RuntimeError("network error"))
 
     monkeypatch.setenv("LANGSMITH_PROJECT", "test-project")
     source = LangSmithSource(client=client)
 
-    try:
+    with pytest.raises(RuntimeError, match="network error"):
         source.resolve_trace_id("run-abc")
-        raise AssertionError("Expected RuntimeError to propagate")
-    except RuntimeError:
-        pass  # Expected — non-404 errors should not trigger fallback
-
-    # read_run was NOT called (error propagated before fallback)
-    assert client.read_run_calls == []

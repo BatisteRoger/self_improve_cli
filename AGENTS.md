@@ -143,11 +143,11 @@ fetching:
 self-improve fetch 019ff0e5-7189-713d-8ab9-c032edf9d4dd --from-run
 ```
 
-The resolution tries the **configured project first** (SmithDB-native
-`runs.retrieve`). If the run is not in the configured project, it falls back
-to a legacy global lookup (`read_run`, deprecated, removed 31 Jan 2027). To
-resolve a run from a different project without relying on the deprecated
-fallback, specify the project explicitly:
+The resolution looks the run up in the **configured project only**
+(`runs.retrieve`, which requires a project): the LangSmith API has no global
+lookup by run ID. Without a project (`LANGSMITH_PROJECT` or `--project`), or
+when the run is not in that project, the command fails with an error naming
+the fix. To resolve a run from a different project, specify it explicitly:
 
 ```bash
 self-improve fetch <run_id> --from-run --project <project_name>

@@ -502,44 +502,33 @@ class LangSmithSource(TraceSource):
     def resolve_trace_id(self, run_id: str) -> RunResolution:
         """Resolve a run ID to its parent trace ID and project.
 
-        Tries the SmithDB-native path first: runs.retrieve with the
-        configured project. If the run is not in the configured project
-        (NotFoundError) or no project is configured, falls back to the
-        legacy read_run global lookup.
+        Uses runs.retrieve, which requires a project: the LangSmith API has
+        no global lookup by run ID. The run must live in the configured
+        project (LANGSMITH_PROJECT or --project); for a run in another
+        project, pass --project <name>.
 
-        The legacy fallback is deprecated (removed 31 Jan 2027). To use
-        the SmithDB-native path for cross-project runs, specify the
-        project with --project <name>.
+        Raises RuntimeError (surfaced by the CLI as a clean error) when no
+        project is configured or the run is not found in the project.
         """
         from langsmith import NotFoundError  # type: ignore[import-not-found]
 
-        client = self._get_client()
-        project_name = self._project_name or _get_project_name()
-
-        # SmithDB-native path: try the configured project first.
-        if project_name:
-            _check_project_allowed(project_name)
-            project_id = self._resolve_project_id()
-            try:
-                return self._resolve_trace_id_via_runs_retrieve(client, run_id, project_id)
-            except NotFoundError:
-                logger.warning(
-                    "Run %s not found in configured project '%s'. "
-                    "Falling back to legacy read_run (deprecated, removed 31 Jan 2027). "
-                    "If the run lives in another project, use --project <name>.",
-                    run_id,
-                    project_name,
-                )
-        else:
-            logger.warning(
-                "No project configured — using legacy read_run for run %s "
-                "(deprecated, removed 31 Jan 2027). "
-                "Set LANGSMITH_PROJECT or use --project to use the SmithDB-native path.",
-                run_id,
+        project_name = self._project_name
+        if not project_name:
+            raise RuntimeError(
+                f"Cannot resolve run {run_id}: no LangSmith project configured. "
+                "Set LANGSMITH_PROJECT in .env or pass --project <name> "
+                "(the project the run belongs to)."
             )
-
-        # Legacy fallback (deprecated, removed 31 Jan 2027).
-        return self._resolve_trace_id_via_read_run(client, run_id)
+        _check_project_allowed(project_name)
+        client = self._get_client()
+        project_id = self._resolve_project_id()
+        try:
+            return self._resolve_trace_id_via_runs_retrieve(client, run_id, project_id)
+        except NotFoundError as exc:
+            raise RuntimeError(
+                f"Run {run_id} not found in project '{project_name}'. "
+                "If the run lives in another project, rerun with --project <name>."
+            ) from exc
 
     def _resolve_trace_id_via_runs_retrieve(
         self, client: Any, run_id: str, project_id: str
@@ -567,23 +556,6 @@ class LangSmithSource(TraceSource):
             time.monotonic() - start,
         )
         return result
-
-    def _resolve_trace_id_via_read_run(self, client: Any, run_id: str) -> RunResolution:
-        """Legacy fallback: resolve via read_run (deprecated, removed 31 Jan 2027)."""
-        logger.info("Resolving run %s via legacy read_run", run_id)
-        start = time.monotonic()
-        sdk_run = client.read_run(run_id)
-        trace_id = str(sdk_run.trace_id)
-        project_id = getattr(sdk_run, "session_id", None)
-        project_id = str(project_id) if project_id else None
-        logger.info(
-            "Resolved run %s -> trace_id %s (project_id=%s) in %.2fs",
-            run_id,
-            trace_id,
-            project_id,
-            time.monotonic() - start,
-        )
-        return RunResolution(trace_id=trace_id, project_id=project_id)
 
     def fetch_feedback(self, trace_id: str) -> list[FeedbackScore]:
         """Return feedback scores on the trace's root run (root run ID == trace ID).

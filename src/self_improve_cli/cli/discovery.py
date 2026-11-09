@@ -422,9 +422,9 @@ def register(sub: argparse._SubParsersAction) -> None:
         "--from-run",
         action="store_true",
         help="Treat the positional argument as a run ID and resolve it to its "
-        "parent trace ID before fetching. Tries the configured project first "
-        "(SmithDB); falls back to a legacy global lookup if the run is not in "
-        "the configured project. Use --project to target a different project.",
+        "parent trace ID before fetching. Looks the run up in the configured "
+        "project only (no global lookup exists); use --project to target the "
+        "project the run belongs to.",
     )
     p.add_argument(
         "--anonymizer",
