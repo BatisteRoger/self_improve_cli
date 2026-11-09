@@ -38,7 +38,7 @@ Issues = "https://github.com/BatisteRoger/self_improve_cli/issues"
 
 [project.optional-dependencies]
 langsmith = [
-  "langsmith>=0.3.1",
+  "langsmith>=0.10.15",
 ]
 privacy = [
   "presidio>=2.2.361",
