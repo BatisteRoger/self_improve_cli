@@ -14,6 +14,7 @@ skill guides evidence retrieval, not judgment.
 
 ```bash
 self-improve fetch <trace_id>   # Download, anonymize, and build representations
+self-improve fetch "<langsmith_run_url>"   # Same, from a run URL copied from the LangSmith UI
 ```
 
 If the target agent has an architecture document, read it first:

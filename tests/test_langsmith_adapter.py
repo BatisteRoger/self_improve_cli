@@ -24,8 +24,9 @@ from self_improve_cli.sources.langsmith import (
 
 
 class _MockProject:
-    def __init__(self, id: str = "proj-uuid-123"):
+    def __init__(self, id: str = "proj-uuid-123", name: str = "test-project"):
         self.id = id
+        self.name = name
 
 
 class _MockRun:
@@ -130,8 +131,11 @@ class _MockClient:
         self._project = project or _MockProject()
         self.aread_project_calls: list[dict] = []
 
-    async def aread_project(self, project_name: str | None = None, **_kw: Any) -> _MockProject:
-        self.aread_project_calls.append({"project_name": project_name})
+    async def aread_project(self, project_name: str | None = None, **kw: Any) -> _MockProject:
+        call: dict[str, Any] = {"project_name": project_name}
+        if "project_id" in kw:
+            call["project_id"] = kw["project_id"]
+        self.aread_project_calls.append(call)
         return self._project
 
 
@@ -461,4 +465,165 @@ def test_resolve_trace_id_non_404_error_propagates(monkeypatch):
     source = LangSmithSource(client=client)
 
     with pytest.raises(RuntimeError, match="network error"):
+        source.resolve_trace_id("run-abc")
+
+
+# ---------------------------------------------------------------------------
+# Tests: resolve_trace_id from a LangSmith run URL / UUIDv7 start_time
+# ---------------------------------------------------------------------------
+
+_ORG = "11111111-1111-4111-8111-111111111111"
+_PROJ = "22222222-2222-4222-8222-222222222222"
+_TRACE = "019ff0e5-0000-7000-8000-000000000001"
+_RUN7 = "019ff0e5-7189-713d-8ab9-c032edf9d4dd"
+
+
+def _not_found() -> Exception:
+    import httpx
+    from langsmith import NotFoundError
+
+    resp = httpx.Response(404, request=httpx.Request("GET", "https://example.com"))
+    return NotFoundError("not found", response=resp, body=None)
+
+
+def test_resolve_from_complete_url_makes_no_api_call(monkeypatch):
+    """A URL with project and trace IDs resolves with no API call."""
+    client = _MockClient()
+    monkeypatch.delenv("LANGSMITH_PROJECT", raising=False)
+    monkeypatch.delenv("LANGCHAIN_PROJECT", raising=False)
+    monkeypatch.delenv("LANGSMITH_ALLOWED_PROJECTS", raising=False)
+    source = LangSmithSource(client=client)
+
+    url = f"https://smith.example.com/o/{_ORG}/projects/p/{_PROJ}/trace/{_TRACE}/run/{_RUN7}"
+    resolution = source.resolve_trace_id(url)
+
+    assert resolution.trace_id == _TRACE
+    assert resolution.project_id == _PROJ
+    assert client.runs.retrieve_calls == []
+    assert client.aread_project_calls == []
+
+
+def test_resolve_from_url_without_trace_retrieves_in_url_project(monkeypatch):
+    """A URL without trace ID calls runs.retrieve in the URL's project, not the configured one."""
+    retrieve_result = _MockRun(id=_RUN7, trace_id=_TRACE, project_id=_PROJ)
+    client = _MockClient(retrieve_result=retrieve_result)
+    monkeypatch.setenv("LANGSMITH_PROJECT", "other-project")
+    monkeypatch.delenv("LANGSMITH_ALLOWED_PROJECTS", raising=False)
+    source = LangSmithSource(client=client)
+
+    url = f"https://smith.example.com/o/{_ORG}/projects/p/{_PROJ}/r/{_RUN7}"
+    resolution = source.resolve_trace_id(url)
+
+    assert resolution.trace_id == _TRACE
+    call = client.runs.retrieve_calls[0]
+    assert call["run_id"] == _RUN7
+    assert call["project_id"] == _PROJ
+    # No lookup of the configured project
+    assert client.aread_project_calls == []
+
+
+def test_resolve_from_url_enforces_allowlist(monkeypatch):
+    """With an allowlist, the URL's project name is read from its ID and checked."""
+    client = _MockClient(project=_MockProject(id=_PROJ, name="production"))
+    monkeypatch.setenv("LANGSMITH_ALLOWED_PROJECTS", "my-agent-*")
+    source = LangSmithSource(client=client)
+
+    url = f"https://smith.example.com/o/{_ORG}/projects/p/{_PROJ}/trace/{_TRACE}/run/{_RUN7}"
+    with pytest.raises(PermissionError, match="production"):
+        source.resolve_trace_id(url)
+
+    assert client.aread_project_calls == [{"project_name": None, "project_id": _PROJ}]
+    assert client.runs.retrieve_calls == []
+
+
+def test_resolve_from_url_allowed_project_passes(monkeypatch):
+    """An allowlisted URL project resolves after the name check."""
+    client = _MockClient(project=_MockProject(id=_PROJ, name="my-agent-dev"))
+    monkeypatch.setenv("LANGSMITH_ALLOWED_PROJECTS", "my-agent-*")
+    source = LangSmithSource(client=client)
+
+    url = f"https://smith.example.com/o/{_ORG}/projects/p/{_PROJ}/trace/{_TRACE}/run/{_RUN7}"
+    assert source.resolve_trace_id(url).trace_id == _TRACE
+
+
+def test_resolve_from_malformed_url_raises_runtime_error(monkeypatch):
+    """A URL that is not a LangSmith run URL fails cleanly, with no API call."""
+    client = _MockClient()
+    monkeypatch.setenv("LANGSMITH_PROJECT", "test-project")
+    source = LangSmithSource(client=client)
+
+    with pytest.raises(RuntimeError, match="Not a LangSmith run URL"):
+        source.resolve_trace_id("https://example.com/some/page")
+    assert client.runs.retrieve_calls == []
+
+
+def test_resolve_uuid7_run_id_passes_start_time(monkeypatch):
+    """A UUIDv7 run ID passes its embedded timestamp as start_time."""
+    from datetime import UTC, datetime
+
+    retrieve_result = _MockRun(id=_RUN7, trace_id=_TRACE, project_id="proj-uuid-123")
+    client = _MockClient(retrieve_result=retrieve_result)
+    monkeypatch.setenv("LANGSMITH_PROJECT", "test-project")
+    source = LangSmithSource(client=client)
+
+    source.resolve_trace_id(_RUN7)
+
+    start_time = client.runs.retrieve_calls[0]["start_time"]
+    assert isinstance(start_time, datetime)
+    assert start_time.tzinfo == UTC
+    assert start_time.year >= 2025
+
+
+def test_resolve_url_start_time_wins_over_uuid7(monkeypatch):
+    """The URL's start_time is passed as is when present."""
+    from datetime import UTC, datetime
+
+    retrieve_result = _MockRun(id=_RUN7, trace_id=_TRACE, project_id=_PROJ)
+    client = _MockClient(retrieve_result=retrieve_result)
+    monkeypatch.delenv("LANGSMITH_ALLOWED_PROJECTS", raising=False)
+    source = LangSmithSource(client=client)
+
+    url = (
+        f"https://smith.example.com/o/{_ORG}/projects/p/{_PROJ}/r/{_RUN7}"
+        "?start_time=2026-11-06T16:36:51.661014Z"
+    )
+    source.resolve_trace_id(url)
+
+    assert client.runs.retrieve_calls[0]["start_time"] == datetime(
+        2026, 11, 6, 16, 36, 51, 661014, tzinfo=UTC
+    )
+
+
+def test_resolve_non_uuid7_run_id_omits_start_time(monkeypatch):
+    """A non-v7 run ID sends no start_time."""
+    retrieve_result = _MockRun(id="r", trace_id=_TRACE, project_id="proj-uuid-123")
+    client = _MockClient(retrieve_result=retrieve_result)
+    monkeypatch.setenv("LANGSMITH_PROJECT", "test-project")
+    source = LangSmithSource(client=client)
+
+    source.resolve_trace_id("6f1c2b1e-8a4d-4c1e-9f1a-2b3c4d5e6f70")
+
+    assert "start_time" not in client.runs.retrieve_calls[0]
+
+
+def test_resolve_uuid7_not_found_is_a_clean_error_without_retry(monkeypatch):
+    """A 404 with a start_time is reported once: no retry without start_time
+    (the live API answers that retry with HTTP 500 for a run in another project)."""
+    client = _MockClient(retrieve_exc=_not_found())
+    monkeypatch.setenv("LANGSMITH_PROJECT", "test-project")
+    source = LangSmithSource(client=client)
+
+    with pytest.raises(RuntimeError, match=r"not found in project 'test-project'"):
+        source.resolve_trace_id(_RUN7)
+    assert len(client.runs.retrieve_calls) == 1
+    assert "start_time" in client.runs.retrieve_calls[0]
+
+
+def test_resolve_not_found_suggests_url(monkeypatch):
+    """The not-found error suggests pasting the run URL or --project."""
+    client = _MockClient(retrieve_exc=_not_found())
+    monkeypatch.setenv("LANGSMITH_PROJECT", "test-project")
+    source = LangSmithSource(client=client)
+
+    with pytest.raises(RuntimeError, match=r"run URL.*--project"):
         source.resolve_trace_id("run-abc")
