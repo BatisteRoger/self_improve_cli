@@ -293,6 +293,7 @@ def _cmd_fetch_experiment(args: argparse.Namespace) -> int:
 def _cmd_fetch(args: argparse.Namespace) -> int:
     """Fetch a trace, anonymize it, and persist the sanitized version."""
     from self_improve_cli.sources.langsmith import LangSmithSource
+    from self_improve_cli.sources.langsmith_url import is_url
 
     usage = None
     if bool(args.experiment) == bool(args.trace_id):
@@ -317,8 +318,9 @@ def _cmd_fetch(args: argparse.Namespace) -> int:
 
     project_id: str | None = None
 
-    # Resolve run_id -> trace_id if the user passed --from-run.
-    if getattr(args, "from_run", False):
+    # Resolve run_id -> trace_id with --from-run, or when given a LangSmith run URL.
+    from_run = bool(getattr(args, "from_run", False)) or is_url(args.trace_id)
+    if from_run:
         resolution = source.resolve_trace_id(args.trace_id)
         trace_id = resolution.trace_id
         project_id = resolution.project_id
@@ -381,7 +383,7 @@ def _cmd_fetch(args: argparse.Namespace) -> int:
     }
     if warning:
         result["warning"] = warning
-    if getattr(args, "from_run", False):
+    if from_run:
         result["resolved_from_run"] = args.trace_id
     _output(result, args)
     return EXIT_OK
@@ -422,9 +424,10 @@ def register(sub: argparse._SubParsersAction) -> None:
         "--from-run",
         action="store_true",
         help="Treat the positional argument as a run ID and resolve it to its "
-        "parent trace ID before fetching. Tries the configured project first "
-        "(SmithDB); falls back to a legacy global lookup if the run is not in "
-        "the configured project. Use --project to target a different project.",
+        "parent trace ID before fetching. A bare run ID is looked up in the "
+        "configured project only (no global lookup exists); use --project to "
+        "target another project, or pass the LangSmith run URL instead, which "
+        "carries the project (a URL is resolved even without --from-run).",
     )
     p.add_argument(
         "--anonymizer",

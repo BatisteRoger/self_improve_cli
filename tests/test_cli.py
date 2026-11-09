@@ -1128,6 +1128,28 @@ def test_fetch_without_from_run_does_not_resolve(tmp_path, capsys, monkeypatch):
     assert "resolved_from_run" not in data
 
 
+def test_fetch_url_resolves_without_from_run(tmp_path, capsys, monkeypatch):
+    """`fetch <langsmith_run_url>` resolves the URL even without --from-run."""
+    import self_improve_cli.sources.langsmith as ls_module
+
+    url = "https://smith.example.com/o/x/projects/p/y/r/run-abc"
+
+    class _UrlSource(_FakeSource):
+        def resolve_trace_id(self, run_id: str) -> RunResolution:
+            assert run_id == url
+            return RunResolution(trace_id="trace-from-url", project_id="proj-from-url")
+
+    monkeypatch.setattr(ls_module, "LangSmithSource", _UrlSource)
+    monkeypatch.delenv("LANGSMITH_PROJECT", raising=False)
+    monkeypatch.delenv("LANGCHAIN_PROJECT", raising=False)
+
+    rc = main(["fetch", url, "--data-dir", str(tmp_path), "--format", "json"])
+    assert rc == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["trace_id"] == "trace-from-url"
+    assert data["resolved_from_run"] == url
+
+
 def test_fetch_from_run_passes_project_id_to_fetch(tmp_path, capsys, monkeypatch):
     """`fetch --from-run` passes the resolved project_id to fetch_trace."""
     import self_improve_cli.sources.langsmith as ls_module

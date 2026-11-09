@@ -133,28 +133,47 @@ Per-command contract status (audit table), known gaps, and the merge checklist f
 
 ## CLI usage details
 
-### Fetching from a run ID
+### Fetching from a run URL or a run ID
 
-LangSmith trace URLs often contain a **run ID** rather than a trace ID. Use
-`--from-run` to have the CLI resolve the run ID to its parent trace ID before
-fetching:
+The simplest input is the **run URL** copied from the LangSmith UI. `fetch`
+recognizes a URL and resolves it, with or without `--from-run`:
+
+```bash
+self-improve fetch "https://<host>/o/<org_id>/projects/p/<project_id>/trace/<trace_id>/run/<run_id>"
+```
+
+The URL carries the project ID and usually the trace ID, so it works across
+projects with no `--project`, and with no API call when both IDs are present.
+Also accepted: `.../projects/p/<project_id>/r/<run_id>?trace_id=<trace_id>`
+and `.../projects/p/<project_id>?peek=<run_id>&peeked_trace=<trace_id>`. Only
+the IDs and `start_time` are read from the URL; API calls always go to
+`LANGSMITH_ENDPOINT`, never to the URL host. `LANGSMITH_ALLOWED_PROJECTS`
+still applies: when it is set, the project name is read from the project ID
+and checked.
+
+With a bare **run ID**, use `--from-run` to resolve it to its parent trace ID
+before fetching:
 
 ```bash
 self-improve fetch 019ff0e5-7189-713d-8ab9-c032edf9d4dd --from-run
 ```
 
-The resolution tries the **configured project first** (SmithDB-native
-`runs.retrieve`). If the run is not in the configured project, it falls back
-to a legacy global lookup (`read_run`, deprecated, removed 31 Jan 2027). To
-resolve a run from a different project without relying on the deprecated
-fallback, specify the project explicitly:
+A bare run ID is looked up in the **configured project only**
+(`runs.retrieve`, which requires a project): the LangSmith API has no global
+lookup by run ID. Without a project (`LANGSMITH_PROJECT` or `--project`), or
+when the run is not in that project, the command fails with an error naming
+the fix: paste the run URL, or specify the project explicitly:
 
 ```bash
 self-improve fetch <run_id> --from-run --project <project_name>
 ```
 
+For a UUIDv7 run ID, the timestamp embedded in the ID is passed to
+`runs.retrieve` as `start_time`, which speeds up retrieval.
+
 The resolution is logged to stderr, and the JSON output includes a
-`resolved_from_run` field so you can trace back which run ID was used.
+`resolved_from_run` field (the run ID or URL given) so you can trace back
+which run was used.
 
 ### Task & outcome assessment
 

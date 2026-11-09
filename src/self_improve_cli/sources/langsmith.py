@@ -33,6 +33,12 @@ from self_improve_cli.sources import (
     _input_messages,
     _output_message,
 )
+from self_improve_cli.sources.langsmith_url import (
+    LangSmithRunRef,
+    is_url,
+    parse_langsmith_run_url,
+    uuid7_timestamp,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -500,63 +506,109 @@ class LangSmithSource(TraceSource):
         )
 
     def resolve_trace_id(self, run_id: str) -> RunResolution:
-        """Resolve a run ID to its parent trace ID and project.
+        """Resolve a run ID or a LangSmith UI run URL to its trace ID and project.
 
-        Tries the SmithDB-native path first: runs.retrieve with the
-        configured project. If the run is not in the configured project
-        (NotFoundError) or no project is configured, falls back to the
-        legacy read_run global lookup.
+        A run URL carries the project ID (and usually the trace ID): a URL
+        with both resolves with no API call; otherwise runs.retrieve is called
+        in the URL's project. Only IDs are read from the URL; API calls go to
+        the configured endpoint, never to the URL host.
 
-        The legacy fallback is deprecated (removed 31 Jan 2027). To use
-        the SmithDB-native path for cross-project runs, specify the
-        project with --project <name>.
+        A bare run ID uses runs.retrieve, which requires a project: the
+        LangSmith API has no global lookup by run ID. The run must live in
+        the configured project (LANGSMITH_PROJECT or --project).
+
+        The allowlist (LANGSMITH_ALLOWED_PROJECTS) applies in both cases.
+        For a UUIDv7 run ID, its embedded timestamp is passed as start_time
+        to speed up retrieval.
+
+        Raises RuntimeError (surfaced by the CLI as a clean error) when no
+        project is known, the URL is malformed, or the run is not found.
         """
         from langsmith import NotFoundError  # type: ignore[import-not-found]
 
-        client = self._get_client()
-        project_name = self._project_name or _get_project_name()
+        url_ref: LangSmithRunRef | None = None
+        if is_url(run_id):
+            try:
+                url_ref = parse_langsmith_run_url(run_id)
+            except ValueError as exc:
+                raise RuntimeError(str(exc)) from exc
+            run_id = url_ref.run_id
 
-        # SmithDB-native path: try the configured project first.
-        if project_name:
+        if url_ref is not None and url_ref.project_id:
+            self._check_project_id_allowed(url_ref.project_id)
+            if url_ref.trace_id:
+                logger.info("Resolved run %s from URL without an API call", run_id)
+                return RunResolution(trace_id=url_ref.trace_id, project_id=url_ref.project_id)
+            project_id = url_ref.project_id
+            where = f"project_id={project_id} (from the URL)"
+        else:
+            project_name = self._project_name
+            if not project_name:
+                raise RuntimeError(
+                    f"Cannot resolve run {run_id}: no LangSmith project configured. "
+                    "Paste the LangSmith run URL instead of the run ID, or set "
+                    "LANGSMITH_PROJECT in .env or pass --project <name> (the project "
+                    "the run belongs to)."
+                )
             _check_project_allowed(project_name)
             project_id = self._resolve_project_id()
-            try:
-                return self._resolve_trace_id_via_runs_retrieve(client, run_id, project_id)
-            except NotFoundError:
-                logger.warning(
-                    "Run %s not found in configured project '%s'. "
-                    "Falling back to legacy read_run (deprecated, removed 31 Jan 2027). "
-                    "If the run lives in another project, use --project <name>.",
-                    run_id,
-                    project_name,
-                )
-        else:
-            logger.warning(
-                "No project configured — using legacy read_run for run %s "
-                "(deprecated, removed 31 Jan 2027). "
-                "Set LANGSMITH_PROJECT or use --project to use the SmithDB-native path.",
-                run_id,
-            )
+            where = f"project '{project_name}'"
 
-        # Legacy fallback (deprecated, removed 31 Jan 2027).
-        return self._resolve_trace_id_via_read_run(client, run_id)
+        start_time = (url_ref.start_time if url_ref else None) or uuid7_timestamp(run_id)
+        client = self._get_client()
+        try:
+            return self._resolve_trace_id_via_runs_retrieve(client, run_id, project_id, start_time)
+        except NotFoundError as exc:
+            raise RuntimeError(
+                f"Run {run_id} not found in {where}. If the run lives in another "
+                "project, paste its LangSmith run URL (it carries the project) "
+                "or rerun with --project <name>."
+            ) from exc
+
+    def _check_project_id_allowed(self, project_id: str) -> None:
+        """Apply the name allowlist to a project known only by its UUID.
+
+        No allowlist: no API call. Otherwise the project name is read
+        (read-only) and checked like any --project name.
+        """
+        if not _get_allowed_projects():
+            return
+        client = self._get_client()
+        project = _run_async(client.aread_project(project_id=project_id))
+        _check_project_allowed(str(project.name))
 
     def _resolve_trace_id_via_runs_retrieve(
-        self, client: Any, run_id: str, project_id: str
+        self,
+        client: Any,
+        run_id: str,
+        project_id: str,
+        start_time: datetime | None = None,
     ) -> RunResolution:
-        """SmithDB-native: resolve via runs.retrieve (requires project_id)."""
+        """SmithDB-native: resolve via runs.retrieve (requires project_id).
+
+        start_time speeds up retrieval. No retry without it on 404: observed
+        2026-11-09, a run looked up in the wrong project returns 404 with
+        start_time but HTTP 500 without it.
+        """
 
         async def _do() -> RunResolution:
+            kwargs: dict[str, Any] = {"start_time": start_time} if start_time else {}
             sdk_run = await client.runs.retrieve(
                 run_id=run_id,
                 project_id=project_id,
                 selects=["ID", "TRACE_ID", "PROJECT_ID"],
+                **kwargs,
             )
             trace_id = str(sdk_run.trace_id)
             pid = getattr(sdk_run, "project_id", None) or project_id
             return RunResolution(trace_id=trace_id, project_id=str(pid))
 
-        logger.info("Resolving run %s via runs.retrieve (project_id=%s)", run_id, project_id)
+        logger.info(
+            "Resolving run %s via runs.retrieve (project_id=%s, start_time=%s)",
+            run_id,
+            project_id,
+            start_time.isoformat() if start_time else None,
+        )
         start = time.monotonic()
         result = _run_async(_do())
         logger.info(
@@ -567,23 +619,6 @@ class LangSmithSource(TraceSource):
             time.monotonic() - start,
         )
         return result
-
-    def _resolve_trace_id_via_read_run(self, client: Any, run_id: str) -> RunResolution:
-        """Legacy fallback: resolve via read_run (deprecated, removed 31 Jan 2027)."""
-        logger.info("Resolving run %s via legacy read_run", run_id)
-        start = time.monotonic()
-        sdk_run = client.read_run(run_id)
-        trace_id = str(sdk_run.trace_id)
-        project_id = getattr(sdk_run, "session_id", None)
-        project_id = str(project_id) if project_id else None
-        logger.info(
-            "Resolved run %s -> trace_id %s (project_id=%s) in %.2fs",
-            run_id,
-            trace_id,
-            project_id,
-            time.monotonic() - start,
-        )
-        return RunResolution(trace_id=trace_id, project_id=project_id)
 
     def fetch_feedback(self, trace_id: str) -> list[FeedbackScore]:
         """Return feedback scores on the trace's root run (root run ID == trace ID).
