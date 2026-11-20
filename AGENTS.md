@@ -83,7 +83,7 @@ Dependency direction: `source -> canonical model -> privacy/storage -> determini
 - `storage/` — safe local artifact layout, atomic writes, metadata, and raw-retention controls. `base.py` (paths + serialization) plus per-area mixins: `traces`, `records`, `experiments`, `ter`, `prompts`, `ati`; `TraceStore` composes them.
 - `representations/` — deterministic L0/L1/L2/L3 TER builders over canonical sanitized data. One module per view (`skeleton`, `narrative`, `run_detail`, `context_at`, `navigation`, `trace_diff`, `tools`) over `common` helpers; `ter.py` writes all derived files. Public names re-exported from `__init__.py`.
 - `metrics/` — tool, context, and skill metrics, each labeled with its approximation and assumptions.
-- `cli/` — command parsing, stable exit codes, stdout/stderr rules, Markdown/JSON output, and agent-oriented help. `main.py` is a thin entry point; handlers and parser registration live per command family in `common` (shared plumbing), `discovery`, `thread`, `views`, `metrics`, `records`, `prompts`, `ati`, `system`. Each module exposes `register(sub)`.
+- `cli/` — command parsing, stable exit codes, stdout/stderr rules, Markdown/JSON output, and agent-oriented help. `main.py` is a thin entry point; handlers and parser registration live per command family in `common` (shared plumbing), `discovery`, `search`, `thread`, `views`, `metrics`, `records`, `prompts`, `ati`, `system`. Each module exposes `register(sub)`.
 
 Keep the core representation and metrics layers free of network calls and LLM calls. This preserves recomputability and makes them easy to test.
 
@@ -203,6 +203,37 @@ self-improve thread <thread_id> --project <project_name>
   200; the output says when it truncates).
 - Next step: `self-improve fetch <trace_id> --project <name>` on the turn
   to analyze.
+
+### Searching run outputs across traces
+
+`search` answers "has this already happened, and how often?" for one defect
+seen in one trace. It is read-only and writes nothing to disk:
+
+```bash
+self-improve search --text "<text>" --since 14 --metadata <key>=<value>
+self-improve search --regex "<python regex>" --run-type llm --limit 20
+```
+
+- It scans the runs of `--run-type` (default `llm`) started in the last
+  `--since` days (default 14) and matches their output: the output message
+  text plus tool-call arguments, or the raw outputs when there is no message.
+- `--text` is case-insensitive. It also narrows the scan server-side with the
+  LangSmith full-text `search(...)` filter, which covers inputs too, so each
+  match is confirmed in the output. `--regex` is Python `re`, matched
+  client-side. With both, both must match.
+- `--metadata key=value` (repeatable) filters server-side on run metadata.
+- The result is `matched` of `scanned`, the frequency. With `--text` or
+  `--metadata`, `scanned` counts the runs the server filter returned, not
+  every run in the window; the server filter is printed with the result.
+- Each match gives start time, trace ID, run ID, model (`ls_model_name`
+  metadata, when recorded) and an excerpt. The excerpt is anonymized with the
+  same backend and structural settings as `fetch`, on a wider window before it
+  is cut. Value-map tables recorded elsewhere in the trace are not available
+  to a single run, so `SELF_IMPROVE_VALUE_MAP` replacements may not apply.
+- `--limit` bounds the matches shown (all are counted); `--max-scan` (default
+  20000) bounds the scan, newest runs first, and the result says when it was
+  reached (`complete: false`). Scanning reads each run's outputs: expect about
+  one minute for 3,000 to 4,000 LLM runs.
 
 ### Task & outcome assessment
 

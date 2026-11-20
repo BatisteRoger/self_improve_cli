@@ -45,6 +45,7 @@ a template.
 | "Is this trace clean?" | `skeleton --errors-only` (quick triage) | `tool-metrics` and `context-metrics` for redundancy/anomalies, `error-neighborhood` for error recovery |
 | "Did the agent recover from that error?" | `error-neighborhood` | `run-detail` on the error and the next step |
 | "I changed something: did the re-run take a different path?" | `diff <trace_a> <trace_b>` (aligned steps, divergence blocks, run IDs on both sides) | `run-detail` on each side of a divergence; `compare` for totals |
+| "Has this defect already happened, and how often?" | `search --text "<text>"` or `--regex <pattern>` over `--since N` days, `--metadata key=value` to scope (matched / scanned, one line per match) | `fetch` a matching trace, then `skeleton` |
 | "What should I inspect next?" | The signal you already have (a metric, a run ID) | A specific run reference, not a generic checklist |
 
 ## Stopping rules
@@ -81,7 +82,8 @@ requirement — skip levels when you already know where to look.
 
 - **L0 — Discovery.** `list`, `list-runs --type llm|tool`, `thread` (the
   turns of one conversation). Find traces by
-  error, token count, or latency.
+  error, token count, or latency. `search` finds runs whose output matches
+  a text or regex over a time window, with the frequency.
 - **L1 — Structure and metrics.** `skeleton`, `tool-metrics`,
   `context-metrics`, `skill-metrics`. The shape of the trace without the
   content. Use it to decide where to focus.

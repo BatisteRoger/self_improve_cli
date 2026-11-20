@@ -141,6 +141,7 @@ every command with `uv run` — do **not** call the
 self-improve init              # Create .env from template (LangSmith API key)
 self-improve list --limit 10   # L0: discover recent traces
 self-improve fetch <trace_id>  # Download, anonymize, build all representations
+self-improve search --text "<text>" --since 14  # L0: how often an output appeared, anonymized excerpts
 self-improve fetch "<langsmith_run_url>"  # Same, from a run URL copied from the LangSmith UI
 self-improve fetch --experiment <name> --outcome-key "<key>>=0.5"  # Every run of an experiment
 self-improve thread "<langsmith_thread_url>"  # L0: turns of a conversation (or a thread ID + --project)
@@ -162,6 +163,7 @@ specific to the target. Format and behavior: "Structural redaction" in
 | ----- | ------- | ------------- |
 | L0 | `list`, `list-runs`, `list-projects` | Discover which traces exist |
 | L0 | `thread` | Turns (traces) of one conversation, with anonymized input/output excerpts |
+| L0 | `search` | Has this output already happened? Runs whose output matches a text or regex over N days, matched / scanned |
 | L1 | `skeleton`, `tool-metrics`, `context-metrics`, `skill-metrics` | Structure, metrics, growth signals |
 | L2 | `narrative` | Chronological story with message deltas |
 | L3 | `run-detail`, `context-at` | Full untruncated content of one run or one step |
