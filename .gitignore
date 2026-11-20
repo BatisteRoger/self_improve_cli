@@ -19,6 +19,7 @@ dist/
 
 # Local data: all trace-derived data stays local (raw, sanitized, TER, evaluations, logs)
 data
+data-ordi
 *.jsonl
 
 # IDE / OS
