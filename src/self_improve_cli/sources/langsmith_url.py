@@ -9,6 +9,10 @@ Accepted URL shapes (any host, so self-hosted deployments work):
   (what ``runs.get_url`` returns; ``/run/<run_id>`` may be absent for a root run)
 - ``/o/<org>/projects/p/<project_id>/r/<run_id>?trace_id=<trace_id>&start_time=<iso>``
 - ``/o/<org>/projects/p/<project_id>?peek=<run_id>&peeked_trace=<trace_id>``
+
+Thread (conversation) URLs, see ``parse_langsmith_thread_url``:
+
+- ``/o/<org>/projects/p/<project_id>?...&peekedConversationId=<thread_id>``
 """
 
 from __future__ import annotations
@@ -61,23 +65,54 @@ def _segment_after(segments: list[str], key: str) -> str | None:
     return None
 
 
+def _split_url(url: str) -> tuple[list[str], dict[str, str], str | None]:
+    """Return (path segments, first value of each query key, project UUID or None)."""
+    parts = urlsplit(url.strip())
+    if parts.scheme not in ("http", "https") or not parts.netloc:
+        raise ValueError(f"Not an http(s) URL: {url!r}")
+    segments = [s for s in parts.path.split("/") if s]
+    query = {k: v[0] for k, v in parse_qs(parts.query).items() if v}
+    project_id = None
+    for i in range(len(segments) - 2):
+        if segments[i] == "projects" and segments[i + 1] == "p":
+            project_id = _uuid_or_none(segments[i + 2])
+            break
+    return segments, query, project_id
+
+
+@dataclass(frozen=True)
+class LangSmithThreadRef:
+    """IDs extracted from a LangSmith UI thread URL. A missing project is None."""
+
+    thread_id: str
+    project_id: str | None = None
+
+
+def parse_langsmith_thread_url(url: str) -> LangSmithThreadRef:
+    """Extract the thread ID (``peekedConversationId``) and project UUID from a URL.
+
+    The thread ID is kept as given: thread IDs are set by the traced
+    application and need not be UUIDs. Raises ValueError when the URL has
+    no thread ID.
+    """
+    _, query, project_id = _split_url(url)
+    thread_id = (query.get("peekedConversationId") or "").strip()
+    if not thread_id:
+        raise ValueError(
+            "LangSmith URL has no thread ID (expected a peekedConversationId=<id> "
+            "query parameter). Open the conversation in the LangSmith Threads view "
+            "and copy that URL, or pass the thread ID itself."
+        )
+    return LangSmithThreadRef(thread_id=thread_id, project_id=project_id)
+
+
 def parse_langsmith_run_url(url: str) -> LangSmithRunRef:
     """Extract run, project, and trace IDs plus start time from a LangSmith UI URL.
 
     Raises ValueError when the URL is not a LangSmith project/run URL or
     carries no run ID.
     """
-    parts = urlsplit(url.strip())
-    if parts.scheme not in ("http", "https") or not parts.netloc:
-        raise ValueError(f"Not an http(s) URL: {url!r}")
-    segments = [s for s in parts.path.split("/") if s]
-    query = {k: v[0] for k, v in parse_qs(parts.query).items() if v}
-
-    project_id = None
-    for i in range(len(segments) - 2):
-        if segments[i] == "projects" and segments[i + 1] == "p":
-            project_id = _uuid_or_none(segments[i + 2])
-            break
+    segments, query, project_id = _split_url(url)
     if project_id is None:
         raise ValueError(
             "Not a LangSmith run URL (expected .../projects/p/<project_id>/...). "

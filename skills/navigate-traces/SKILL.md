@@ -26,6 +26,7 @@ a template.
 
 | Question | Start with | Next step only if insufficient |
 |----------|-----------|--------------------------------|
+| "Which trace is turn N of this conversation?" / "What was said across the conversation?" | `thread <thread_id or LangSmith thread URL>` (turns in order, anonymized excerpts) | `fetch` the turn's trace, then `skeleton` |
 | "What happened in this trace?" | `skeleton` (shows assessment header if set) | `narrative --budget 4000` for a bounded whole-session read, or `narrative` for full sections |
 | "What was the agent asked to do, and did it succeed?" | `assess <trace_id>` (show) | `skeleton` for run-level evidence |
 | "Which steps errored or were cancelled?" | `skeleton --errors-only` | `error-neighborhood` for context around each error |
@@ -78,7 +79,8 @@ When you have no precise question and need a broad scan of an unfamiliar
 trace, the L0 → L1 → L2 → L3 ladder is a sensible default. It is not a
 requirement — skip levels when you already know where to look.
 
-- **L0 — Discovery.** `list`, `list-runs --type llm|tool`. Find traces by
+- **L0 — Discovery.** `list`, `list-runs --type llm|tool`, `thread` (the
+  turns of one conversation). Find traces by
   error, token count, or latency.
 - **L1 — Structure and metrics.** `skeleton`, `tool-metrics`,
   `context-metrics`, `skill-metrics`. The shape of the trace without the

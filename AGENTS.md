@@ -83,7 +83,7 @@ Dependency direction: `source -> canonical model -> privacy/storage -> determini
 - `storage/` — safe local artifact layout, atomic writes, metadata, and raw-retention controls. `base.py` (paths + serialization) plus per-area mixins: `traces`, `records`, `experiments`, `ter`, `prompts`, `ati`; `TraceStore` composes them.
 - `representations/` — deterministic L0/L1/L2/L3 TER builders over canonical sanitized data. One module per view (`skeleton`, `narrative`, `run_detail`, `context_at`, `navigation`, `trace_diff`, `tools`) over `common` helpers; `ter.py` writes all derived files. Public names re-exported from `__init__.py`.
 - `metrics/` — tool, context, and skill metrics, each labeled with its approximation and assumptions.
-- `cli/` — command parsing, stable exit codes, stdout/stderr rules, Markdown/JSON output, and agent-oriented help. `main.py` is a thin entry point; handlers and parser registration live per command family in `common` (shared plumbing), `discovery`, `views`, `metrics`, `records`, `prompts`, `ati`, `system`. Each module exposes `register(sub)`.
+- `cli/` — command parsing, stable exit codes, stdout/stderr rules, Markdown/JSON output, and agent-oriented help. `main.py` is a thin entry point; handlers and parser registration live per command family in `common` (shared plumbing), `discovery`, `thread`, `views`, `metrics`, `records`, `prompts`, `ati`, `system`. Each module exposes `register(sub)`.
 
 Keep the core representation and metrics layers free of network calls and LLM calls. This preserves recomputability and makes them easy to test.
 
@@ -174,6 +174,35 @@ For a UUIDv7 run ID, the timestamp embedded in the ID is passed to
 The resolution is logged to stderr, and the JSON output includes a
 `resolved_from_run` field (the run ID or URL given) so you can trace back
 which run was used.
+
+### Conversations: from a thread to its turns
+
+A LangSmith thread (conversation) spans several traces, one per turn.
+`thread` lists them, oldest first, without storing anything:
+
+```bash
+self-improve thread "https://<host>/o/<org_id>/projects/p/<project_id>?peekedConversationId=<thread_id>"
+self-improve thread <thread_id> --project <project_name>
+```
+
+- Traces are grouped by LangSmith itself (`threads.list_traces`), from the
+  standard thread metadata keys `session_id`, `thread_id` or
+  `conversation_id` on the root run.
+- One row per turn: start time, trace ID, status, latency, total tokens,
+  error flag, and an excerpt of the root input and output. Status is
+  derived (`error` when an error is recorded, `pending` when the run has no
+  end time, else `success`): the thread listing returns no status field.
+- Excerpts come from LangSmith's server-side previews (about 150
+  characters), never from full inputs/outputs. They are anonymized in
+  memory with the same pipeline and settings as `fetch` (`--anonymizer`,
+  `SELF_IMPROVE_DROP_KEYS`, `SELF_IMPROVE_VALUE_MAP`), in one pass over the
+  whole thread so a placeholder means the same value in every turn.
+- The URL gives the thread ID (`peekedConversationId`) and the project ID;
+  without a URL the project comes from `--project` or `LANGSMITH_PROJECT`.
+  `LANGSMITH_ALLOWED_PROJECTS` applies. `--limit` caps the turns (default
+  200; the output says when it truncates).
+- Next step: `self-improve fetch <trace_id> --project <name>` on the turn
+  to analyze.
 
 ### Task & outcome assessment
 

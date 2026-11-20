@@ -23,7 +23,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from self_improve_cli.cli import ati, discovery, metrics, prompts, records, system, views
+from self_improve_cli.cli import ati, discovery, metrics, prompts, records, system, thread, views
 from self_improve_cli.cli.common import EXIT_ERROR
 from self_improve_cli.cli.logging_setup import setup_logging
 
@@ -86,6 +86,7 @@ def build_parser() -> argparse.ArgumentParser:
     system.register(sub)
     prompts.register(sub)
     ati.register(sub)
+    thread.register(sub)
 
     return parser
 
