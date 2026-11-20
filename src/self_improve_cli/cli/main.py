@@ -24,6 +24,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from self_improve_cli.cli import ati, discovery, metrics, prompts, records, system, thread, views
+from self_improve_cli.cli import search as search_cmd
 from self_improve_cli.cli.common import EXIT_ERROR
 from self_improve_cli.cli.logging_setup import setup_logging
 
@@ -80,6 +81,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     discovery.register(sub)
+    search_cmd.register(sub)
     views.register(sub)
     metrics.register(sub)
     records.register(sub)

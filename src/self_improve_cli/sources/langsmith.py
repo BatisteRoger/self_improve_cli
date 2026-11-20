@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -79,6 +80,33 @@ _FULL_SELECTS = [
     "METADATA",
     "TAGS",
 ]
+
+# `search` (SLN-69): what matching and the result line need, nothing more.
+# METADATA carries the model name (`ls_model_name`) and the metadata filter keys.
+_SEARCH_SELECTS = ["ID", "TRACE_ID", "NAME", "RUN_TYPE", "START_TIME", "OUTPUTS", "METADATA"]
+_SEARCH_PAGE_SIZE = 500
+
+
+def _filter_literal(value: str) -> str:
+    """Quote a value for the LangSmith filter query language."""
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def build_search_filter(text: str | None, metadata: list[tuple[str, str]]) -> str | None:
+    """Server-side filter for `search`: full-text `search(...)` AND metadata equalities.
+
+    The full-text search covers the whole run (inputs too), so it only narrows
+    the scan; the caller confirms the match in the output text.
+    """
+    clauses = [f"search({_filter_literal(text)})"] if text else []
+    clauses += [
+        f"and(eq(metadata_key, {_filter_literal(k)}), eq(metadata_value, {_filter_literal(v)}))"
+        for k, v in metadata
+    ]
+    if not clauses:
+        return None
+    return clauses[0] if len(clauses) == 1 else f"and({', '.join(clauses)})"
+
 
 # traces.query defaults min_start_time to 24h ago, which would silently
 # hide older traces. Use a wide window to preserve the legacy "most recent
@@ -511,6 +539,49 @@ class LangSmithSource(TraceSource):
         runs = _run_async(_fetch())
         logger.info("Found %d %s runs in %.2fs", len(runs), run_type, time.monotonic() - start)
         return [_sdk_run_to_summary(r) for r in runs]
+
+    def scan_runs(
+        self,
+        *,
+        run_type: str,
+        since_days: int,
+        filter_expr: str | None,
+        on_run: Callable[[Run], bool],
+    ) -> bool:
+        """Stream runs of a type started in the last `since_days` days to `on_run`.
+
+        Only the fields `search` reads cross the wire (`_SEARCH_SELECTS`). The
+        runs are raw (not anonymized): `on_run` must not persist or print them.
+        `on_run` returns False to stop. Returns True when the window was
+        exhausted, False when `on_run` stopped the scan.
+        """
+        client = self._get_client()
+        project = self._resolve_project()
+        logger.info(
+            "Scanning runs (project=%s, run_type=%s, since_days=%s, filter=%s)",
+            project,
+            run_type,
+            since_days,
+            filter_expr,
+        )
+
+        async def _scan() -> bool:
+            project_id = await self._resolve_project_id_async()
+            kwargs: dict[str, Any] = {
+                "project_ids": [project_id],
+                "run_type": run_type.upper(),
+                "selects": _SEARCH_SELECTS,
+                "min_start_time": datetime.now(UTC) - timedelta(days=since_days),
+                "page_size": _SEARCH_PAGE_SIZE,
+            }
+            if filter_expr:
+                kwargs["filter"] = filter_expr
+            async for sdk_run in client.runs.query(**kwargs):
+                if not on_run(_sdk_run_to_canonical(sdk_run)):
+                    return False
+            return True
+
+        return _run_async(_scan())
 
     def fetch_trace(self, trace_id: str, project_id: str | None = None) -> Trace:
         """Download all runs of a trace and return a canonical Trace.
