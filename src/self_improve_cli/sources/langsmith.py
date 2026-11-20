@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import time
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -361,6 +362,57 @@ def _sdk_feedback_to_score(fb: Any) -> FeedbackScore:
     return FeedbackScore(key=str(getattr(fb, "key", "")), score=numeric)
 
 
+# threads.list_traces selects: previews only (bounded, server-side), never the
+# full INPUTS/OUTPUTS, which can weigh hundreds of KB per turn.
+_THREAD_SELECTS = [
+    "TRACE_ID",
+    "NAME",
+    "START_TIME",
+    "END_TIME",
+    "TOTAL_TOKENS",
+    "ERROR",
+    "INPUTS_PREVIEW",
+    "OUTPUTS_PREVIEW",
+]
+_THREAD_MAX_TURNS = 200
+
+
+@dataclass
+class ThreadTurns:
+    """Root runs of one thread, oldest first. Content is NOT anonymized yet."""
+
+    project_id: str
+    project_name: str
+    runs: list[Run]
+    truncated: bool = False
+
+
+def _thread_trace_to_run(item: Any) -> Run:
+    """Map a ``threads.list_traces`` item to a canonical root Run.
+
+    The list does not return a status: it is derived from the error and the
+    end time (``error``, ``pending`` when not ended, else ``success``).
+    """
+    error = getattr(item, "error", None)
+    end = getattr(item, "end_time", None)
+    start = getattr(item, "start_time", None)
+    status = "error" if error else ("pending" if end is None else "success")
+    trace_id = str(item.trace_id)
+    return Run(
+        id=trace_id,
+        trace_id=trace_id,
+        run_type=RunType.CHAIN,
+        name=getattr(item, "name", None) or "",
+        status=status,
+        start_time=_iso(start),
+        end_time=_iso(end),
+        total_tokens=getattr(item, "total_tokens", None),
+        error=error,
+        inputs={"preview": getattr(item, "inputs_preview", None) or ""},
+        outputs={"preview": getattr(item, "outputs_preview", None) or ""},
+    )
+
+
 class LangSmithSource(TraceSource):
     """LangSmith trace source. Requires LANGSMITH_API_KEY in the environment."""
 
@@ -632,6 +684,55 @@ class LangSmithSource(TraceSource):
             _sdk_feedback_to_score(fb)
             for fb in client.list_feedback(run_ids=[trace_id], limit=_FEEDBACK_LIMIT)
         ]
+
+    def list_thread_turns(
+        self, thread_id: str, project_id: str | None = None, limit: int = _THREAD_MAX_TURNS
+    ) -> ThreadTurns:
+        """List a thread's root runs (one per turn), oldest first.
+
+        Uses LangSmith's thread grouping (``threads.list_traces``), which keys
+        traces on the standard thread metadata (``session_id``, ``thread_id``
+        or ``conversation_id``). Only server-side previews of the root input
+        and output cross this boundary, never full inputs/outputs; the caller
+        anonymizes them before display.
+
+        ``project_id`` (e.g. from a thread URL) takes precedence over the
+        configured project name. The allowlist applies in both cases.
+        """
+        client = self._get_client()
+        if project_id:
+            # Read the name once: for the allowlist and for next-step commands.
+            pid = project_id
+            project_name = str(_run_async(client.aread_project(project_id=pid)).name)
+            _check_project_allowed(project_name)
+        else:
+            pid = self._resolve_project_id()
+            project_name = self._project_name
+        logger.info("Listing traces of thread %s (project_id=%s)", thread_id, pid)
+
+        async def _fetch() -> tuple[list[Any], bool]:
+            items: list[Any] = []
+            async for item in client.threads.list_traces(
+                thread_id, project_id=pid, page_size=100, selects=_THREAD_SELECTS
+            ):
+                if len(items) >= limit:
+                    return items, True
+                items.append(item)
+            return items, False
+
+        start = time.monotonic()
+        items, truncated = _run_async(_fetch())
+        logger.info(
+            "Found %d traces for thread %s in %.2fs",
+            len(items),
+            thread_id,
+            time.monotonic() - start,
+        )
+        runs = [_thread_trace_to_run(t) for t in items]
+        runs.sort(key=lambda r: r.start_time or "")
+        return ThreadTurns(
+            project_id=pid, project_name=project_name, runs=runs, truncated=truncated
+        )
 
     def fetch_experiment(self, name: str) -> ExperimentListing:
         """List an experiment session's root runs grouped by dataset example.

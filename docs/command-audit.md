@@ -6,6 +6,7 @@ Per-command status against the six contract criteria defined in `AGENTS.md` § E
 
 | Command | Predictable | Bounded | Connected | Honest | Recoverable | Composable (JSON) |
 |---------|:-:|:-:|:-:|:-:|:-:|:-:|
+| `thread` | ✓ turn numbers, trace IDs | ✓ previews cut to 120 chars, `--limit` with truncation flag | trace IDs + `fetch` next command | ✓ status derived and labeled, excerpts labeled as anonymized previews, missing tokens `n/a` | ✓ empty thread names the metadata keys and `--project` / URL | ✓ structured |
 | `skeleton` | ✓ | ✓ `--errors-only` | run IDs | ✓ | ✓ | ✓ structured |
 | `narrative` | ✓ | ✓ truncation, `--from/--to/--around-step`, `--budget` (header and omission markers counted; Markdown and JSON keep the same steps) | run IDs per step + omitted markers | ✓ | ✓ validates `--budget > 0` | ✓ structured |
 | `run-detail` | ✓ | ✓ `--tool-calls-only`, `--inputs-only/--outputs-only` (mutually exclusive) | parent/child refs | ✓ | ✓ suggests skeleton | ✓ structured |
